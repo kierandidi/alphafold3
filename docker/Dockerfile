@@ -37,7 +37,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /uvx /bin/
 # UV_PROJECT_ENVIRONMENT explicitly sets the virtual environment location.
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_PROJECT_ENVIRONMENT=/alphafold3_venv
+ENV UV_CACHE_DIR=/tmp/uv-cache
 RUN uv venv $UV_PROJECT_ENVIRONMENT
+RUN mkdir -p $UV_CACHE_DIR && chmod 1777 $UV_CACHE_DIR
 
 ENV PATH="/hmmer/bin:/alphafold3_venv/bin:$PATH"
 
