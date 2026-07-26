@@ -17,7 +17,7 @@ From: {{ base_image }}
     Author Kieran Didi
     Description Apache-licensed AlphaFold3 runtime with OpenFold3 weight support
     AlphaFold3Repository https://github.com/kierandidi/alphafold3
-    AlphaFold3Commit 390c421245ebeadd78b44f42d7bada75291db5c3
+    AlphaFold3Commit bef9ed6c1bf928195a7781531164d4a8ded88ad2
     OpenFold3PortCommit 9ad46295a2506ed70e7c9e8309bb15fd6b335124
 
 %post
@@ -49,7 +49,7 @@ From: {{ base_image }}
 
     git clone https://github.com/kierandidi/alphafold3.git /opt/alphafold3
     cd /opt/alphafold3
-    git checkout --detach 390c421245ebeadd78b44f42d7bada75291db5c3
+    git checkout --detach bef9ed6c1bf928195a7781531164d4a8ded88ad2
 
     uv venv /alphafold3_venv --python python3.12
     UV_PROJECT_ENVIRONMENT=/alphafold3_venv \
