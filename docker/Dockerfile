@@ -81,8 +81,18 @@ ARG UV_EXTRAS=""
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_LINK_MODE=copy uv sync --frozen --all-groups --no-editable $UV_EXTRAS
 
+# The one-time OpenFold3 converter reads a PyTorch checkpoint. Keep the
+# inference runtime JAX-based, but include pinned CPU-only torch so this same
+# image can reproducibly convert and verify OpenFold3 weights.
+RUN uv pip install \
+    --python $UV_PROJECT_ENVIRONMENT/bin/python \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.13.0
+
 # Build chemical components database (this binary was installed by uv sync).
-RUN uv run build_data
+RUN uv run build_data \
+    && uv cache clean \
+    && rm -rf /root/.cache
 
 # To work around a known XLA issue causing the compilation time to greatly
 # increase, the following environment variable setting XLA flags must be enabled
