@@ -1,0 +1,84 @@
+Bootstrap: {{ bootstrap }}
+From: {{ base_image }}
+
+%arguments
+    bootstrap = docker
+    base_image = nvidia/cuda:12.6.3-base-ubuntu24.04
+
+# Dual AlphaFold3/OpenFold3 runtime.
+#
+# Build from this repository:
+#   apptainer build af3-open.sif apptainer/af3-open.def
+#
+# Model parameters are deliberately not included. Mount the Google AF3 or
+# converted OpenFold3 model directory at runtime.
+
+%labels
+    Author Kieran Didi
+    Description Apache-licensed AlphaFold3 runtime with OpenFold3 weight support
+    AlphaFold3Repository https://github.com/kierandidi/alphafold3
+    AlphaFold3Commit 390c421245ebeadd78b44f42d7bada75291db5c3
+    OpenFold3PortCommit 9ad46295a2506ed70e7c9e8309bb15fd6b335124
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    apt-get update --quiet
+    apt-get install --yes --quiet \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        ninja-build \
+        python3.12 \
+        python3.12-dev \
+        wget \
+        zlib1g-dev \
+        zstd
+    rm -rf /var/lib/apt/lists/*
+
+    rm -rf /app/alphafold /app/alphafold3 /opt/alphafold3 /alphafold3_venv
+
+    wget -qO /tmp/uv.tar.gz \
+        https://github.com/astral-sh/uv/releases/download/0.9.24/uv-x86_64-unknown-linux-gnu.tar.gz
+    tar -xzf /tmp/uv.tar.gz -C /tmp
+    install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv
+    install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/uvx
+    rm -rf /tmp/uv.tar.gz /tmp/uv-x86_64-unknown-linux-gnu
+
+    git clone https://github.com/kierandidi/alphafold3.git /opt/alphafold3
+    cd /opt/alphafold3
+    git checkout --detach 390c421245ebeadd78b44f42d7bada75291db5c3
+
+    uv venv /alphafold3_venv --python python3.12
+    UV_PROJECT_ENVIRONMENT=/alphafold3_venv \
+        UV_LINK_MODE=copy \
+        uv sync --frozen --no-editable
+
+    # The one-time OpenFold3 converter reads a PyTorch checkpoint. Runtime
+    # inference remains JAX-based.
+    uv pip install \
+        --python /alphafold3_venv/bin/python \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.13.0
+
+    /alphafold3_venv/bin/build_data
+
+    uv cache clean
+    rm -rf /root/.cache /opt/alphafold3/.git
+    mkdir -p /mnt/data /mnt/home /projects /net /squash
+
+%environment
+    export PATH="/alphafold3_venv/bin:$PATH"
+    export AF3_REPO_ROOT=/opt/alphafold3
+    export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
+
+%runscript
+    exec "$@"
+
+%test
+    /alphafold3_venv/bin/python -c "import torch; from alphafold3.model import of3_weight_converter"
+
+%help
+    One image supports Google AF3 and converted OpenFold3 parameter families.

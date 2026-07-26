@@ -73,6 +73,27 @@ The OpenFold3 weights are subject to the [Apache 2.0 License](https://www.apache
 
 See the [installation documentation](docs/installation.md).
 
+### Container images
+
+Build the shared AF3/OpenFold3 Docker runtime from this checkout:
+
+```bash
+DOCKER_BUILDKIT=1 docker build \
+  --file docker/Dockerfile \
+  --tag af3-open:latest \
+  .
+```
+
+Alternatively, build the standalone Apptainer image:
+
+```bash
+apptainer build af3-open.sif apptainer/af3-open.def
+```
+
+Both images contain the code and the one-time OpenFold3 conversion dependency,
+but no model parameters. Mount either Google AF3 parameters or converted
+OpenFold3 parameters when running inference.
+
 Once you have installed AlphaFold 3, you can test your setup using e.g. the
 following input JSON file named `fold_input.json`:
 
