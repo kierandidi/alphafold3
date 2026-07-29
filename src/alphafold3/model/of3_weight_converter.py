@@ -64,6 +64,22 @@ def _reorder_aatype_weights(w: np.ndarray) -> np.ndarray:
     return w[_AF3_TO_OF3_AATYPE]
 
 
+# AF3 msa one-hot is 32-class (adds DN after N); OF3's is 32-class with GAP last.
+# AF3: 0-20=protein+UNK, 21=GAP, 22-25=A/G/C/U, 26-29=DA/DG/DC/DT, 30=N, 31=DN
+# OF3: 0-20=protein+UNK, 21-25=A/G/C/U/N, 26-30=DA/DG/DC/DT/DN, 31=GAP
+_AF3_TO_OF3_MSA = np.concatenate([_AF3_TO_OF3_AATYPE, np.array([30], dtype=np.int32)])
+
+
+def _reorder_msa_weights(w: np.ndarray) -> np.ndarray:
+    """Reorder OF3 msa embedding rows to AF3 layout.
+
+    w shape: (34, c_out) = 32 msa classes + has_deletion + deletion_value.
+    Without this the RNA classes are off by one (AF3 puts GAP at 21, OF3 at 31),
+    so every RNA residue embeds as its neighbour. Protein and DNA indices coincide.
+    """
+    return np.concatenate([w[_AF3_TO_OF3_MSA], w[32:34]], axis=0)
+
+
 def _reorder_features_1d(arr: np.ndarray, c_single: int = 384) -> np.ndarray:
     """Reorder OF3 features_1d (single_emb + target_feat) along axis 0 to AF3 layout.
 
@@ -385,8 +401,8 @@ def map_evoformer_input_embeddings(sd: dict, params: dict) -> None:
         params.setdefault(f'{scope}/bond_embedding', {})['weights'] = _t(
             _get(sd, 'input_embedder.linear_token_bonds.weight'))
     if _has(sd, 'msa_module_embedder.linear_m.weight'):
-        params.setdefault(f'{scope}/msa_activations', {})['weights'] = _t(
-            _get(sd, 'msa_module_embedder.linear_m.weight'))
+        params.setdefault(f'{scope}/msa_activations', {})['weights'] = _reorder_msa_weights(_t(
+            _get(sd, 'msa_module_embedder.linear_m.weight')))
     if _has(sd, 'msa_module_embedder.linear_s_input.weight'):
         params.setdefault(f'{scope}/extra_msa_target_feat', {})['weights'] = _reorder_target_feat_weights(
             _t(_get(sd, 'msa_module_embedder.linear_s_input.weight')))
@@ -614,7 +630,11 @@ def map_template_embedder(sd: dict, params: dict, *,
     for idx, attr in [(0, 'dgram_linear'), (8, 'linear_z')]:
         _set(params, f'{scope_ste}/template_pair_embedding_{idx}', 'weights',
              _t(_get(sd, f'{tpe}.{attr}.weight')))
-    for idx, attr in [(2, 'aatype_linear_1'), (3, 'aatype_linear_2')]:
+    # AF3 concatenates aatype[None, :, :] (varies along j) at index 2 and
+    # aatype[:, None, :] (varies along i) at index 3; OF3 applies aatype_linear_1
+    # to the i-varying copy and aatype_linear_2 to the j-varying one. Pairing them
+    # by number instead of by axis transposes the template aatype term.
+    for idx, attr in [(2, 'aatype_linear_2'), (3, 'aatype_linear_1')]:
         _set(params, f'{scope_ste}/template_pair_embedding_{idx}', 'weights',
              _reorder_aatype_weights(_t(_get(sd, f'{tpe}.{attr}.weight'))))
     for idx, attr in [(1, 'pseudo_beta_mask_linear'), (4, 'x_linear'),
