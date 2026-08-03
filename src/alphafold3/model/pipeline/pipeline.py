@@ -157,6 +157,7 @@ class WholePdbPipeline:
     conformer_max_iterations: int | None = None
     resolve_msa_overlaps: bool = True
     fix_standalone_glycans: bool = False
+    of3_weights: bool = False
 
   def __init__(self, *, config: Config):
     """Initializes WholePdb data pipeline.
@@ -392,6 +393,7 @@ class WholePdbPipeline:
         all_token_atoms_layout=all_token_atoms_layout,
         bond_layout=polymer_ligand_bonds,
         padding_shapes=padding_shapes,
+        of3_weights=self._config.of3_weights,
     )
     # Create ligand-ligand bond features.
     ligand_ligand_bond_info = features.LigandLigandBondInfo.compute_features(

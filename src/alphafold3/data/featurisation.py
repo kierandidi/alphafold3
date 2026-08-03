@@ -52,6 +52,7 @@ def featurise_input(
     conformer_max_iterations: int | None = None,
     resolve_msa_overlaps: bool = True,
     fix_standalone_glycans: bool = False,
+    of3_weights: bool = False,
     verbose: bool = False,
 ) -> Sequence[features.BatchDict]:
   """Featurise the folding input.
@@ -97,6 +98,7 @@ def featurise_input(
           conformer_max_iterations=conformer_max_iterations,
           resolve_msa_overlaps=resolve_msa_overlaps,
           fix_standalone_glycans=fix_standalone_glycans,
+          of3_weights=of3_weights,
       ),
   )
 
