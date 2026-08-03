@@ -1119,6 +1119,37 @@ jax.tree_util.register_dataclass(
 )
 
 
+def _bond_atom_is_token(
+    all_tokens: atom_layout.AtomLayout,
+    bond_layout: atom_layout.AtomLayout,
+) -> np.ndarray:
+  """Mask of bond ends whose own atom is a token, i.e. whose residue is atomized.
+
+  Args:
+    all_tokens: AtomLayout for tokens; shape (num_tokens,).
+    bond_layout: Bond ends to test; shape (num_bonds, 2).
+
+  Returns:
+    Boolean array shaped like ``bond_layout.atom_name``.
+  """
+  tokens = set(
+      zip(
+          all_tokens.chain_id.ravel().tolist(),
+          all_tokens.res_id.ravel().tolist(),
+          all_tokens.atom_name.ravel().tolist(),
+      )
+  )
+  flat = [
+      key in tokens
+      for key in zip(
+          bond_layout.chain_id.ravel().tolist(),
+          bond_layout.res_id.ravel().tolist(),
+          bond_layout.atom_name.ravel().tolist(),
+      )
+  ]
+  return np.array(flat, dtype=bool).reshape(bond_layout.atom_name.shape)
+
+
 @dataclasses.dataclass(frozen=True)
 class PolymerLigandBondInfo:
   """Contains information about polymer-ligand bonds."""
@@ -1135,6 +1166,7 @@ class PolymerLigandBondInfo:
       all_token_atoms_layout: atom_layout.AtomLayout,
       bond_layout: atom_layout.AtomLayout | None,
       padding_shapes: PaddingShapes,
+      of3_weights: bool = False,
   ) -> Self:
     """Computes the InterChainBondInfo features.
 
@@ -1158,8 +1190,19 @@ class PolymerLigandBondInfo:
       # These atom renames are so that we can use the atom layout code with
       # all_tokens, which only has a single atom per token.
       atom_names = bond_layout.atom_name.copy()
-      atom_names[np.isin(bond_layout.chain_type, peptide_types)] = 'CA'  # pyrefly: ignore[bad-argument-type]
-      atom_names[np.isin(bond_layout.chain_type, nucleic_types)] = "C1'"  # pyrefly: ignore[bad-argument-type]
+      peptide_mask = np.isin(bond_layout.chain_type, peptide_types)  # pyrefly: ignore[bad-argument-type]
+      nucleic_mask = np.isin(bond_layout.chain_type, nucleic_types)  # pyrefly: ignore[bad-argument-type]
+      if of3_weights:
+        # OpenFold3 atomizes any polymer residue joined to another by a non-peptide bond, so
+        # its token_bonds sit on the real bond atom, not the residue's representative. Where
+        # that atom is itself a token, address it directly. Where it is not -- an unatomized
+        # standard residue -- fall back to the rename, without which the bond cannot resolve
+        # against all_tokens at all and is silently dropped.
+        is_own_token = _bond_atom_is_token(all_tokens, bond_layout)
+        peptide_mask &= ~is_own_token
+        nucleic_mask &= ~is_own_token
+      atom_names[peptide_mask] = 'CA'
+      atom_names[nucleic_mask] = "C1'"
       adjusted_bond_layout = atom_layout.AtomLayout(
           atom_name=atom_names,
           res_id=bond_layout.res_id,
