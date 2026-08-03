@@ -1119,6 +1119,17 @@ jax.tree_util.register_dataclass(
 )
 
 
+def _atom_keys(layout: atom_layout.AtomLayout) -> list[tuple[str, int, str]]:
+  """(chain_id, res_id, atom_name) of every entry in ``layout``, flattened."""
+  return list(
+      zip(
+          layout.chain_id.ravel().tolist(),
+          layout.res_id.ravel().tolist(),
+          layout.atom_name.ravel().tolist(),
+      )
+  )
+
+
 def _bond_atom_is_token(
     all_tokens: atom_layout.AtomLayout,
     bond_layout: atom_layout.AtomLayout,
@@ -1132,22 +1143,17 @@ def _bond_atom_is_token(
   Returns:
     Boolean array shaped like ``bond_layout.atom_name``.
   """
-  tokens = set(
-      zip(
-          all_tokens.chain_id.ravel().tolist(),
-          all_tokens.res_id.ravel().tolist(),
-          all_tokens.atom_name.ravel().tolist(),
-      )
-  )
-  flat = [
-      key in tokens
-      for key in zip(
-          bond_layout.chain_id.ravel().tolist(),
-          bond_layout.res_id.ravel().tolist(),
-          bond_layout.atom_name.ravel().tolist(),
-      )
-  ]
+  tokens = set(_atom_keys(all_tokens))
+  flat = [key in tokens for key in _atom_keys(bond_layout)]
   return np.array(flat, dtype=bool).reshape(bond_layout.atom_name.shape)
+
+
+def _both_ends_atomized(
+    all_tokens: atom_layout.AtomLayout,
+    bond_layout: atom_layout.AtomLayout,
+) -> np.ndarray:
+  """Mask of bonds, shape (num_bonds,), whose two ends are both atomized."""
+  return _bond_atom_is_token(all_tokens, bond_layout).all(axis=1)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1166,7 +1172,6 @@ class PolymerLigandBondInfo:
       all_token_atoms_layout: atom_layout.AtomLayout,
       bond_layout: atom_layout.AtomLayout | None,
       padding_shapes: PaddingShapes,
-      of3_weights: bool = False,
   ) -> Self:
     """Computes the InterChainBondInfo features.
 
@@ -1192,15 +1197,11 @@ class PolymerLigandBondInfo:
       atom_names = bond_layout.atom_name.copy()
       peptide_mask = np.isin(bond_layout.chain_type, peptide_types)  # pyrefly: ignore[bad-argument-type]
       nucleic_mask = np.isin(bond_layout.chain_type, nucleic_types)  # pyrefly: ignore[bad-argument-type]
-      if of3_weights:
-        # OpenFold3 atomizes any polymer residue joined to another by a non-peptide bond, so
-        # its token_bonds sit on the real bond atom, not the residue's representative. Where
-        # that atom is itself a token, address it directly. Where it is not -- an unatomized
-        # standard residue -- fall back to the rename, without which the bond cannot resolve
-        # against all_tokens at all and is silently dropped.
-        is_own_token = _bond_atom_is_token(all_tokens, bond_layout)
-        peptide_mask &= ~is_own_token
-        nucleic_mask &= ~is_own_token
+      # An atomized residue's bond atom is its own token, so address it directly;
+      # renaming would point the bond at CA. Unatomized residues still need it.
+      is_own_token = _bond_atom_is_token(all_tokens, bond_layout)
+      peptide_mask &= ~is_own_token
+      nucleic_mask &= ~is_own_token
       atom_names[peptide_mask] = 'CA'
       atom_names[nucleic_mask] = "C1'"
       adjusted_bond_layout = atom_layout.AtomLayout(
@@ -1297,6 +1298,7 @@ class LigandLigandBondInfo:
       all_tokens: atom_layout.AtomLayout,
       bond_layout: atom_layout.AtomLayout | None,
       padding_shapes: PaddingShapes,
+      polymer_polymer_bonds: atom_layout.AtomLayout | None = None,
   ) -> Self:
     """Computes the InterChainBondInfo features.
 
@@ -1304,6 +1306,8 @@ class LigandLigandBondInfo:
       all_tokens: AtomLayout for tokens; shape (num_tokens,).
       bond_layout: Bond layout for ligand-ligand bonds.
       padding_shapes: Padding shapes.
+      polymer_polymer_bonds: Polymer-polymer bonds; those between two atomized
+        residues are merged in. Supplied only for ported OpenFold3 weights.
 
     Returns:
       A LigandLigandBondInfo object.
@@ -1356,6 +1360,19 @@ class LigandLigandBondInfo:
           res_id=np.array([], dtype=int).reshape(s),
           chain_id=np.array([], dtype=object).reshape(s),
       )
+    if polymer_polymer_bonds is not None and polymer_polymer_bonds.atom_name.size:
+      atomized = polymer_polymer_bonds[
+          _both_ends_atomized(all_tokens, polymer_polymer_bonds)
+      ]
+      if atomized.atom_name.size:
+        adjusted_bond_layout = atom_layout.AtomLayout(
+            **{
+                field: np.concatenate(
+                    [getattr(adjusted_bond_layout, field), getattr(atomized, field)]
+                )
+                for field in ('atom_name', 'res_id', 'chain_id')
+            }
+        )
     # 10 x num_tokens as max_inter_bonds_ratio + max_intra_bonds_ration = 2.061.
     adjusted_bond_layout = adjusted_bond_layout.copy_and_pad_to(
         (padding_shapes.num_tokens * 10, 2)
