@@ -29,6 +29,7 @@ from alphafold3 import structure
 from alphafold3.common import base_config
 from alphafold3.common import folding_input
 from alphafold3.constants import chemical_components
+from alphafold3.constants import mmcif_names
 from alphafold3.model import feat_batch
 from alphafold3.model import features
 from alphafold3.model.pipeline import inter_chain_bonds
@@ -196,7 +197,8 @@ class WholePdbPipeline:
         filter_leaving_atoms=self._config.drop_ligand_leaving_atoms,
         only_glycan_ligands_for_leaving_atoms=True,
         covalent_bonds_only=True,
-        remove_polymer_polymer_bonds=True,
+        # Inert unless collected below via include_intra_chain_polymer.
+        remove_polymer_polymer_bonds=False,
         remove_bad_bonds=True,
         fix_standalone_glycans=self._config.fix_standalone_glycans,
     )
@@ -211,6 +213,17 @@ class WholePdbPipeline:
             only_glycan_ligands=False,
             allow_multiple_bonds_per_atom=True,
         )
+    )
+
+    # Neither layout above claims polymer-polymer bonds, so a covalent bond
+    # between two atomized residues -- an ester or thioether joining modified
+    # residues, say -- is dropped despite being recorded in the input.
+    polymer_polymer_bonds = inter_chain_bonds.get_bond_layout(
+        struct=cleaned_struc,
+        allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        allow_multiple_bonds_per_atom=True,
+        include_intra_chain_polymer=True,
     )
 
     # If empty replace with None as this causes errors downstream.
@@ -393,13 +406,13 @@ class WholePdbPipeline:
         all_token_atoms_layout=all_token_atoms_layout,
         bond_layout=polymer_ligand_bonds,
         padding_shapes=padding_shapes,
-        of3_weights=self._config.of3_weights,
     )
     # Create ligand-ligand bond features.
     ligand_ligand_bond_info = features.LigandLigandBondInfo.compute_features(
         all_tokens,
         ligand_ligand_bonds,
         padding_shapes,
+        polymer_polymer_bonds=polymer_polymer_bonds,
     )
 
     # Create the Pseudo-beta layout for distogram head and distance error head.
