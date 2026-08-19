@@ -642,6 +642,7 @@ def from_sequences_and_bonds(
     bonded_atom_pairs: Sequence[tuple[BondAtomId, BondAtomId]] | None,
     ccd: chemical_components.Ccd,
     chain_ids: Sequence[str] | None = None,
+    res_ids: Sequence[Sequence[int] | None] | None = None,
     name: str = 'from_sequences_and_bonds',
     bond_type: str | None = None,
     **constructor_args,
@@ -670,6 +671,13 @@ def from_sequences_and_bonds(
     chain_ids: A sequence of chain IDs, one for each chain in `sequences`. If
       not provided, then the chain IDs will be generated automatically based on
       sequence indices.
+    res_ids: An optional sequence of per-chain residue IDs, one entry per chain
+      in `sequences`. When a chain's entry is provided it must have one residue
+      ID per residue in that chain's expanded sequence, and those IDs are used
+      verbatim (preserving gaps) instead of the default contiguous ``1..N``. A
+      ``None`` entry (or ``res_ids=None``) falls back to ``1..N`` for that chain.
+      Only the residue numbering is affected; ``bonded_atom_pairs`` still refer
+      to residues by their 0-based position within the chain.
     name: A name for the returned structure.
     bond_type: This type will be used for all bonds in the structure, where type
       follows PDB scheme, e.g. unknown (?), hydrog, metalc, covale, disulf.
@@ -703,11 +711,12 @@ def from_sequences_and_bonds(
       current_chain_id = chain_ids[chain_i]
     else:
       current_chain_id = mmcif.int_id_to_str_id(chain_i + 1)
+    chain_res_ids = None if res_ids is None else res_ids[chain_i]
     num_chain_residues = 0
     for res_i, full_res_name in enumerate(
         expand_sequence(sequence, curr_chain_type, sequence_format)
     ):
-      current_res_id = res_i + 1
+      current_res_id = res_i + 1 if chain_res_ids is None else int(chain_res_ids[res_i])
       num_res_atoms = 0
 
       # Look for bonded atoms in the bond lookup and if any are found, add
