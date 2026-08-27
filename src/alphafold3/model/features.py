@@ -920,6 +920,11 @@ class TokenFeatures:
   entity_id: xnp_ndarray
   sym_id: xnp_ndarray
 
+  # Number of residues in a head-to-tail cyclic polymer chain. A value of 0
+  # keeps the standard linear relative-position encoding. This is populated by
+  # runtimes that can identify an explicit terminal C--N bond in the input.
+  cyclic_period: xnp_ndarray
+
   # token type features
   is_protein: xnp_ndarray
   is_rna: xnp_ndarray
@@ -994,6 +999,7 @@ class TokenFeatures:
         asym_id=_pad_to(asym_id, (padding_shapes.num_tokens,)),
         entity_id=_pad_to(entity_id, (padding_shapes.num_tokens,)),
         sym_id=_pad_to(sym_id, (padding_shapes.num_tokens,)),
+        cyclic_period=np.zeros(padding_shapes.num_tokens, dtype=np.int32),
         seq_length=seq_length,
         is_protein=_pad_to(is_protein, (padding_shapes.num_tokens,)),  # pyrefly: ignore[bad-argument-type]
         is_rna=_pad_to(is_rna, (padding_shapes.num_tokens,)),  # pyrefly: ignore[bad-argument-type]
@@ -1015,6 +1021,9 @@ class TokenFeatures:
         entity_id=batch['entity_id'],
         asym_id=batch['asym_id'],
         sym_id=batch['sym_id'],
+        cyclic_period=batch.get(
+            'cyclic_period', np.zeros_like(batch['residue_index'])
+        ),
         seq_length=batch['seq_length'],
         is_protein=batch['is_protein'],
         is_rna=batch['is_rna'],
@@ -1033,6 +1042,7 @@ class TokenFeatures:
         'entity_id': self.entity_id,
         'asym_id': self.asym_id,
         'sym_id': self.sym_id,
+        'cyclic_period': self.cyclic_period,
         'seq_length': self.seq_length,
         'is_protein': self.is_protein,
         'is_rna': self.is_rna,
