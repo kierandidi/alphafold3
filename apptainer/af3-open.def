@@ -17,7 +17,7 @@ From: {{ base_image }}
     Author Kieran Didi
     Description Apache-licensed AlphaFold3 runtime with OpenFold3 weight support
     AlphaFold3Repository https://github.com/kierandidi/alphafold3
-    AlphaFold3Commit 36fad169902c52b6a9f245cfa8f2b2d2406409cf
+    AlphaFold3Commit db6b4f678d4594215ae1bc22b7a4dc5408273b89
     OpenFold3PortCommit 9ad46295a2506ed70e7c9e8309bb15fd6b335124
 
 %post
@@ -49,7 +49,7 @@ From: {{ base_image }}
 
     git clone https://github.com/kierandidi/alphafold3.git /opt/alphafold3
     cd /opt/alphafold3
-    git checkout --detach 36fad169902c52b6a9f245cfa8f2b2d2406409cf
+    git checkout --detach db6b4f678d4594215ae1bc22b7a4dc5408273b89
 
     uv venv /alphafold3_venv --python python3.12
     UV_PROJECT_ENVIRONMENT=/alphafold3_venv \
@@ -78,7 +78,7 @@ From: {{ base_image }}
     exec "$@"
 
 %test
-    /alphafold3_venv/bin/python -c "import torch; from alphafold3.model import of3_weight_converter"
+    /alphafold3_venv/bin/python -c "import dataclasses, torch; from alphafold3.model import features, of3_weight_converter; assert 'cyclic_period' in {f.name for f in dataclasses.fields(features.TokenFeatures)}"
 
 %help
     One image supports Google AF3 and converted OpenFold3 parameter families.
