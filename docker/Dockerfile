@@ -19,6 +19,10 @@
 
 FROM nvidia/cuda:12.6.3-base-ubuntu24.04
 
+LABEL org.opencontainers.image.source="https://github.com/kierandidi/alphafold3" \
+      org.opencontainers.image.revision="db6b4f678d4594215ae1bc22b7a4dc5408273b89" \
+      org.opencontainers.image.description="AlphaFold3/OpenFold3 runtime with explicit cyclic-polymer relative offsets"
+
 # Some RUN statements are combined together to make Docker build run faster.
 # Get latest package listing, install python, git, wget, compilers and libs.
 # * git is required for pyproject.toml toolchain's use of CMakeLists.txt.
