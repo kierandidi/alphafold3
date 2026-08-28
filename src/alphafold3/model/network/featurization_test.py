@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def _token_features(*, residue_index, asym_id, cyclic_period):
+def _token_features(*, residue_index, asym_id, cyclic_period, cyclic_position=None):
   residue_index = jnp.asarray(residue_index, dtype=jnp.int32)
   num_tokens = residue_index.shape[0]
   zeros = jnp.zeros(num_tokens, dtype=jnp.int32)
@@ -31,6 +31,10 @@ def _token_features(*, residue_index, asym_id, cyclic_period):
       entity_id=ones,
       sym_id=ones,
       cyclic_period=jnp.asarray(cyclic_period, dtype=jnp.int32),
+      cyclic_position=jnp.asarray(
+          residue_index if cyclic_position is None else cyclic_position,
+          dtype=jnp.int32,
+      ),
       is_protein=jnp.ones(num_tokens, dtype=bool),
       is_rna=jnp.zeros(num_tokens, dtype=bool),
       is_dna=jnp.zeros(num_tokens, dtype=bool),
@@ -91,15 +95,39 @@ class CreateRelativeEncodingTest(absltest.TestCase):
     np.testing.assert_array_equal(decoded[:3, 3:], np.full((3, 2), 33))
     np.testing.assert_array_equal(decoded[3:, :3], np.full((2, 3), 33))
 
+  def test_cyclic_position_is_independent_of_gapped_residue_numbering(self):
+    token_features = _token_features(
+        residue_index=[10, 11, 50, 51],
+        asym_id=np.ones(4),
+        cyclic_period=np.full(4, 4),
+        cyclic_position=np.arange(4),
+    )
+
+    encoded = featurization.create_relative_encoding(
+        token_features, max_relative_idx=32, max_relative_chain=2
+    )
+
+    expected = np.array([
+        [0, -1, -2, 1],
+        [1, 0, -1, -2],
+        [2, 1, 0, -1],
+        [-1, 2, 1, 0],
+    ])
+    np.testing.assert_array_equal(
+        _decode_residue_offset(encoded, max_relative_idx=32), expected
+    )
+
   def test_legacy_batch_defaults_to_linear_chain(self):
     batch = _token_features(
         residue_index=[1, 2, 3], asym_id=[1, 1, 1], cyclic_period=[0, 0, 0]
     ).as_data_dict()
     del batch['cyclic_period']
+    del batch['cyclic_position']
 
     restored = features.TokenFeatures.from_data_dict(batch)
 
     np.testing.assert_array_equal(restored.cyclic_period, np.zeros(3))
+    np.testing.assert_array_equal(restored.cyclic_position, np.zeros(3))
 
   def test_cyclic_period_fallback_is_jittable(self):
     batch = _token_features(

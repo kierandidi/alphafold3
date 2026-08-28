@@ -924,6 +924,10 @@ class TokenFeatures:
   # keeps the standard linear relative-position encoding. This is populated by
   # runtimes that can identify an explicit terminal C--N bond in the input.
   cyclic_period: xnp_ndarray
+  # Zero-based residue ordinal within a cyclic chain. This is separate from
+  # residue_index because structure inputs may preserve non-contiguous residue
+  # numbering, while circular distance is defined by sequence order.
+  cyclic_position: xnp_ndarray
 
   # token type features
   is_protein: xnp_ndarray
@@ -1000,6 +1004,7 @@ class TokenFeatures:
         entity_id=_pad_to(entity_id, (padding_shapes.num_tokens,)),
         sym_id=_pad_to(sym_id, (padding_shapes.num_tokens,)),
         cyclic_period=np.zeros(padding_shapes.num_tokens, dtype=np.int32),
+        cyclic_position=np.zeros(padding_shapes.num_tokens, dtype=np.int32),
         seq_length=seq_length,
         is_protein=_pad_to(is_protein, (padding_shapes.num_tokens,)),  # pyrefly: ignore[bad-argument-type]
         is_rna=_pad_to(is_rna, (padding_shapes.num_tokens,)),  # pyrefly: ignore[bad-argument-type]
@@ -1031,6 +1036,11 @@ class TokenFeatures:
             if 'cyclic_period' in batch
             else jnp.zeros_like(batch['residue_index'])
         ),
+        cyclic_position=(
+            batch['cyclic_position']
+            if 'cyclic_position' in batch
+            else jnp.zeros_like(batch['residue_index'])
+        ),
         seq_length=batch['seq_length'],
         is_protein=batch['is_protein'],
         is_rna=batch['is_rna'],
@@ -1050,6 +1060,7 @@ class TokenFeatures:
         'asym_id': self.asym_id,
         'sym_id': self.sym_id,
         'cyclic_period': self.cyclic_period,
+        'cyclic_position': self.cyclic_position,
         'seq_length': self.seq_length,
         'is_protein': self.is_protein,
         'is_rna': self.is_rna,
