@@ -127,7 +127,30 @@ class CreateRelativeEncodingTest(absltest.TestCase):
     restored = features.TokenFeatures.from_data_dict(batch)
 
     np.testing.assert_array_equal(restored.cyclic_period, np.zeros(3))
-    np.testing.assert_array_equal(restored.cyclic_position, np.zeros(3))
+    np.testing.assert_array_equal(restored.cyclic_position, np.arange(1, 4))
+
+  def test_legacy_cyclic_period_uses_residue_index_as_position(self):
+    batch = _token_features(
+        residue_index=[0, 1, 2, 3],
+        asym_id=[1, 1, 1, 1],
+        cyclic_period=[4, 4, 4, 4],
+    ).as_data_dict()
+    del batch['cyclic_position']
+
+    restored = features.TokenFeatures.from_data_dict(batch)
+    encoded = featurization.create_relative_encoding(
+        restored, max_relative_idx=32, max_relative_chain=2
+    )
+
+    expected = np.array([
+        [0, -1, -2, 1],
+        [1, 0, -1, -2],
+        [2, 1, 0, -1],
+        [-1, 2, 1, 0],
+    ])
+    np.testing.assert_array_equal(
+        _decode_residue_offset(encoded, max_relative_idx=32), expected
+    )
 
   def test_cyclic_period_fallback_is_jittable(self):
     batch = _token_features(

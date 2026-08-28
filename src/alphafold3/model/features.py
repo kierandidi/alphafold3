@@ -1039,7 +1039,7 @@ class TokenFeatures:
         cyclic_position=(
             batch['cyclic_position']
             if 'cyclic_position' in batch
-            else jnp.zeros_like(batch['residue_index'])
+            else batch['residue_index']
         ),
         seq_length=batch['seq_length'],
         is_protein=batch['is_protein'],
