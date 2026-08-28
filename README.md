@@ -127,7 +127,7 @@ cd RFProteina-cyclic
 AF3_CYCLIC_SOURCE_REPO=../alphafold3-cyclic-runtime \
 AF3_CYCLIC_OUTPUT_ROOT="$PWD/artifacts/af3-cyclic/f901bbe7772c" \
   bash scripts/build_cyclic_af3_runtime.sh
-sha256sum --check artifacts/af3-cyclic/f901bbe7772c/SHA256SUMS
+(cd artifacts/af3-cyclic/f901bbe7772c && sha256sum --check SHA256SUMS)
 ```
 
 The adapter currently enables cyclic offsets for protein chains only. RNA/DNA
