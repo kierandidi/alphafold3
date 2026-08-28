@@ -73,6 +73,68 @@ The OpenFold3 weights are subject to the [Apache 2.0 License](https://www.apache
 
 See the [installation documentation](docs/installation.md).
 
+### Cyclic-polymer runtime in this fork
+
+The tested cyclic implementation is published on branch
+`feat/cyclic-offset-runtime`. Pin commit
+`f901bbe7772c55363ffd3a0d1071f89a7c1bdc75` for reproducible builds. It changes
+the AF3 relative-position encoding for an explicitly marked head-to-tail cyclic
+protein chain while leaving ordinary linear inputs unchanged. AF3 and converted
+OpenFold3 weights use the same engine.
+
+Clone and build it with:
+
+```bash
+git clone --branch feat/cyclic-offset-runtime \
+  https://github.com/kierandidi/alphafold3.git alphafold3-cyclic-runtime
+cd alphafold3-cyclic-runtime
+git checkout f901bbe7772c55363ffd3a0d1071f89a7c1bdc75
+DOCKER_BUILDKIT=1 docker build \
+  --ulimit nofile=65536:65536 \
+  --tag alphafold3:cyclic-f901bbe \
+  --file docker/Dockerfile .
+```
+
+The image is designed to run under an arbitrary allocation UID. This smoke test
+checks both the compiled extension and the cyclic feature contract without model
+parameters or a GPU:
+
+```bash
+docker run --rm --user 65534:65534 --entrypoint /usr/bin/env \
+  alphafold3:cyclic-f901bbe \
+  /alphafold3_venv/bin/python -c \
+  "import alphafold3.cpp; from alphafold3.model import features; assert {'cyclic_period', 'cyclic_position'} <= features.TokenFeatures.__dataclass_fields__.keys()"
+```
+
+Important: the model engine does not infer topology from an ordinary AF3 JSON
+sequence. The caller must add two token features after normal AF3 featurisation:
+
+* `cyclic_period`: the chain length on every token of a cyclic chain, otherwise
+  zero;
+* `cyclic_position`: the zero-based residue ordinal within that chain. This must
+  not be derived from author residue IDs, which may be gapped.
+
+The RFProteina branch `feat/cyclic-folding-runtime` supplies the tested adapter.
+Its `run_alphafold_batch.py` accepts `cyclic_chain_ids` in each manifest entry;
+the AF3 oracle adds that field automatically when the input structure contains
+an explicit terminal carbonyl-C to N bond. To build the same OCI, SIF, and Enroot
+bundle on another cluster, keep the two repositories as siblings and run:
+
+```bash
+git clone --branch feat/cyclic-folding-runtime \
+  git@github.com:baker-laboratory/RFD4-Proteina-dev.git RFProteina-cyclic
+cd RFProteina-cyclic
+AF3_CYCLIC_SOURCE_REPO=../alphafold3-cyclic-runtime \
+AF3_CYCLIC_OUTPUT_ROOT="$PWD/artifacts/af3-cyclic/f901bbe7772c" \
+  bash scripts/build_cyclic_af3_runtime.sh
+sha256sum --check artifacts/af3-cyclic/f901bbe7772c/SHA256SUMS
+```
+
+The adapter currently enables cyclic offsets for protein chains only. RNA/DNA
+and unmarked chains remain linear. A terminal bond is still passed through the
+normal AF3 input path; the offset feature is additional model context, not a
+replacement for chemical connectivity.
+
 ### Container images
 
 Build the shared AF3/OpenFold3 Docker runtime from this checkout:
