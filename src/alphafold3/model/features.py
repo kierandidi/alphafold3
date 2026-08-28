@@ -1021,8 +1021,15 @@ class TokenFeatures:
         entity_id=batch['entity_id'],
         asym_id=batch['asym_id'],
         sym_id=batch['sym_id'],
-        cyclic_period=batch.get(
-            'cyclic_period', np.zeros_like(batch['residue_index'])
+        # ``from_data_dict`` executes inside the jitted model path as well as
+        # during NumPy-side featurisation.  Do not use ``dict.get`` with a
+        # NumPy fallback here: its default is evaluated eagerly and therefore
+        # attempts to convert ``residue_index`` when it is a JAX tracer, even
+        # when ``cyclic_period`` is present in the batch.
+        cyclic_period=(
+            batch['cyclic_period']
+            if 'cyclic_period' in batch
+            else jnp.zeros_like(batch['residue_index'])
         ),
         seq_length=batch['seq_length'],
         is_protein=batch['is_protein'],

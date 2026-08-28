@@ -11,6 +11,7 @@
 from absl.testing import absltest
 from alphafold3.model import features
 from alphafold3.model.network import featurization
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -99,6 +100,33 @@ class CreateRelativeEncodingTest(absltest.TestCase):
     restored = features.TokenFeatures.from_data_dict(batch)
 
     np.testing.assert_array_equal(restored.cyclic_period, np.zeros(3))
+
+  def test_cyclic_period_fallback_is_jittable(self):
+    batch = _token_features(
+        residue_index=[1, 2, 3], asym_id=[1, 1, 1], cyclic_period=[0, 0, 0]
+    ).as_data_dict()
+    del batch['cyclic_period']
+
+    cyclic_period = jax.jit(
+        lambda traced_batch: features.TokenFeatures.from_data_dict(
+            traced_batch
+        ).cyclic_period
+    )(batch)
+
+    np.testing.assert_array_equal(cyclic_period, np.zeros(3))
+
+  def test_present_cyclic_period_does_not_evaluate_numpy_fallback(self):
+    batch = _token_features(
+        residue_index=[1, 2, 3], asym_id=[1, 1, 1], cyclic_period=[3, 3, 3]
+    ).as_data_dict()
+
+    cyclic_period = jax.jit(
+        lambda traced_batch: features.TokenFeatures.from_data_dict(
+            traced_batch
+        ).cyclic_period
+    )(batch)
+
+    np.testing.assert_array_equal(cyclic_period, np.full(3, 3))
 
 
 if __name__ == '__main__':
