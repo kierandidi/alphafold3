@@ -73,6 +73,10 @@ RUN (cd /hmmer_build/hmmer-3.4 && ./configure --prefix /hmmer) && \
 # Copy the AlphaFold 3 source code from the local machine to the container and
 # set the working directory to there.
 COPY . /app/alphafold
+# Portable runtimes execute under the allocation user's numeric UID rather than
+# root.  Shared-repository umasks can make the build context group-private, so
+# normalize the copied source before it becomes an immutable image layer.
+RUN chmod -R a+rX /app/alphafold
 WORKDIR /app/alphafold
 
 # Install the exact dependency tree using uv and cache the build artifacts.
