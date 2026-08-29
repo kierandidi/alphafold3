@@ -719,10 +719,19 @@ passed to skip the Jackhmmer/Nhmmer search stage.
 
 ## Bonds
 
-To manually specify covalent bonds, use the `bondedAtomPairs` field. This is
-intended for modelling covalent ligands, and for defining multi-CCD ligands
-(e.g. glycans). Defining covalent bonds between or within polymer entities is
-not currently supported.
+To manually specify covalent bonds, use the `bondedAtomPairs` field. Upstream
+AF3 uses this for covalent ligands and multi-CCD ligands (e.g. glycans). This
+fork additionally embeds explicit bonds between or within polymer entities,
+including disulfide and isopeptide macrocycle closures. Ordinary protein
+residues address the bond through their CA tokens, nucleic acids through C1',
+and atomized modified residues through the actual bonded-atom tokens.
+
+An explicit polymer bond is independent of circular sequence offsets. In the
+RFProteina batch adapter, only a true terminal protein C--N backbone closure
+should be listed in the manifest's `cyclic_chain_ids`; a chain cyclized through
+SG--SG or side-chain amide atoms must retain linear sequence offsets. If a
+terminal ring also carries a side-chain crosslink, supply both features. The
+standard AF3 JSON schema does not itself expose the cyclic-offset token fields.
 
 Bonds are specified as pairs of (source atom, destination atom), with each atom
 being uniquely addressed using 3 fields:
