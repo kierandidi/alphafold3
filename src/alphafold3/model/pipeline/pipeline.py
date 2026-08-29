@@ -215,9 +215,10 @@ class WholePdbPipeline:
         )
     )
 
-    # Neither layout above claims polymer-polymer bonds, so a covalent bond
-    # between two atomized residues -- an ester or thioether joining modified
-    # residues, say -- is dropped despite being recorded in the input.
+    # Neither layout above claims polymer-polymer bonds. Keep explicit
+    # crosslinks (head-to-tail, disulfide, isopeptide, or modified-residue
+    # links); the bond feature maps ordinary residues to their representative
+    # tokens and addresses atomized residues by the actual bonded atom.
     polymer_polymer_bonds = inter_chain_bonds.get_bond_layout(
         struct=cleaned_struc,
         allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
