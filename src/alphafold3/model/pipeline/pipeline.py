@@ -199,7 +199,9 @@ class WholePdbPipeline:
         covalent_bonds_only=True,
         # Inert unless collected below via include_intra_chain_polymer.
         remove_polymer_polymer_bonds=False,
-        remove_bad_bonds=True,
+        # FoldInput bonds are explicit user constraints. Do not discard a
+        # macrocycle merely because the starting coordinates are unclosed.
+        remove_bad_bonds=False,
         fix_standalone_glycans=self._config.fix_standalone_glycans,
     )
 
@@ -220,6 +222,7 @@ class WholePdbPipeline:
     # links); the bond feature maps ordinary residues to their representative
     # tokens and addresses atomized residues by the actual bonded atom.
     polymer_polymer_bonds = inter_chain_bonds.get_bond_layout(
+        bond_threshold=np.inf,
         struct=cleaned_struc,
         allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
         allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
