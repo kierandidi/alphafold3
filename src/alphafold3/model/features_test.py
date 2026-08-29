@@ -99,6 +99,122 @@ def test_multiple_polymer_crosslinks_are_embedded_independently():
   np.testing.assert_array_equal(gather.gather_idxs[valid], [[0, 3], [1, 2]])
 
 
+def test_pipeline_excludes_only_linear_backbone_links_from_crosslinks():
+  fold_input = folding_input.Input(
+      name='linear_and_cyclic_links',
+      chains=(
+          folding_input.ProteinChain(
+              id='A',
+              sequence='CKAD',
+              ptms=(),
+              paired_msa='',
+              unpaired_msa='>query\nCKAD\n',
+              templates=(),
+          ),
+      ),
+      rng_seeds=(1,),
+      bonded_atom_pairs=(
+          (('A', 10, 'C'), ('A', 20, 'N')),
+          (('A', 40, 'C'), ('A', 10, 'N')),
+          (('A', 20, 'NZ'), ('A', 40, 'CG')),
+      ),
+      residue_numbering={'A': (10, 20, 30, 40)},
+  )
+  structure = fold_input.to_structure(chemical_components.Ccd())
+  bonds = pipeline.inter_chain_bonds.get_bond_layout(
+      bond_threshold=np.inf,
+      struct=structure,
+      allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
+      allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+      include_bond_types=(mmcif_names.COVALENT_BOND,),
+      allow_multiple_bonds_per_atom=True,
+      include_intra_chain_polymer=True,
+  )
+
+  filtered = pipeline._without_linear_polymer_backbone_bonds(
+      structure, bonds, flatten_non_standard_residues=True
+  )
+
+  assert filtered.atom_name.tolist() == [['C', 'N'], ['NZ', 'CG']]
+  assert filtered.res_id.tolist() == [[40, 10], [20, 40]]
+
+
+def test_pipeline_keeps_atomized_modified_residue_backbone_link():
+  fold_input = folding_input.Input(
+      name='modified_backbone',
+      chains=(
+          folding_input.ProteinChain(
+              id='A',
+              sequence='SY',
+              ptms=(('SEP', 1), ('PTR', 2)),
+              paired_msa='',
+              unpaired_msa='>query\nSY\n',
+              templates=(),
+          ),
+      ),
+      rng_seeds=(1,),
+      bonded_atom_pairs=((('A', 1, 'C'), ('A', 2, 'N')),),
+  )
+  structure = fold_input.to_structure(chemical_components.Ccd())
+  bonds = pipeline.inter_chain_bonds.get_bond_layout(
+      bond_threshold=np.inf,
+      struct=structure,
+      allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
+      allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+      include_bond_types=(mmcif_names.COVALENT_BOND,),
+      allow_multiple_bonds_per_atom=True,
+      include_intra_chain_polymer=True,
+  )
+
+  atomized = pipeline._without_linear_polymer_backbone_bonds(
+      structure, bonds, flatten_non_standard_residues=True
+  )
+  residue_tokenized = pipeline._without_linear_polymer_backbone_bonds(
+      structure, bonds, flatten_non_standard_residues=False
+  )
+
+  assert atomized.atom_name.tolist() == [['C', 'N']]
+  assert not residue_tokenized.atom_name.size
+
+
+def test_pipeline_keeps_dipeptide_head_to_tail_link():
+  fold_input = folding_input.Input(
+      name='cyclic_dipeptide',
+      chains=(
+          folding_input.ProteinChain(
+              id='A',
+              sequence='AG',
+              ptms=(),
+              paired_msa='',
+              unpaired_msa='>query\nAG\n',
+              templates=(),
+          ),
+      ),
+      rng_seeds=(1,),
+      bonded_atom_pairs=(
+          (('A', 1, 'C'), ('A', 2, 'N')),
+          (('A', 2, 'C'), ('A', 1, 'N')),
+      ),
+  )
+  structure = fold_input.to_structure(chemical_components.Ccd())
+  bonds = pipeline.inter_chain_bonds.get_bond_layout(
+      bond_threshold=np.inf,
+      struct=structure,
+      allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
+      allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+      include_bond_types=(mmcif_names.COVALENT_BOND,),
+      allow_multiple_bonds_per_atom=True,
+      include_intra_chain_polymer=True,
+  )
+
+  filtered = pipeline._without_linear_polymer_backbone_bonds(
+      structure, bonds, flatten_non_standard_residues=True
+  )
+
+  assert filtered.atom_name.tolist() == [['C', 'N']]
+  assert filtered.res_id.tolist() == [[2, 1]]
+
+
 @pytest.mark.parametrize(
     ('sequence', 'bond_atoms'),
     [('CAAAAAC', ('SG', 'SG')), ('KAAAAAD', ('NZ', 'CG'))],
