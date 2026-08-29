@@ -136,8 +136,16 @@ def test_full_pipeline_embeds_explicit_polymer_macrocycle(sequence, bond_atoms):
   np.testing.assert_array_equal(gather_idxs[valid[0]], [0, len(sequence) - 1])
 
 
-def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates():
-  sequence = 'KAAAAAD'
+@pytest.mark.parametrize(
+    ('sequence', 'bond_atoms', 'bond_type'),
+    [
+        ('KAAAAAD', ('NZ', 'CG'), mmcif_names.COVALENT_BOND),
+        ('CAAAAAC', ('SG', 'SG'), mmcif_names.DISULFIDE_BRIDGE),
+    ],
+)
+def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates(
+    sequence, bond_atoms, bond_type
+):
   chain = folding_input.ProteinChain(
       id='A',
       sequence=sequence,
@@ -150,14 +158,22 @@ def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates():
       name='unclosed_isopeptide',
       chains=(chain,),
       rng_seeds=(1,),
-      bonded_atom_pairs=((('A', 1, 'NZ'), ('A', len(sequence), 'CG')),),
+      bonded_atom_pairs=((
+          ('A', 1, bond_atoms[0]),
+          ('A', len(sequence), bond_atoms[1]),
+      ),),
   )
   ccd = chemical_components.Ccd()
   structure = fold_input.to_structure(ccd)
+  structure = structure.copy_and_update(
+      bonds=structure.bonds.copy_and_update(
+          type=np.full(structure.bonds.size, bond_type, dtype=object)
+      )
+  )
   endpoint = np.flatnonzero(
       (structure.chain_id == 'A')
       & (structure.res_id == len(sequence))
-      & (structure.atom_name == 'CG')
+      & (structure.atom_name == bond_atoms[1])
   )
   assert len(endpoint) == 1
   coords = structure.coords.copy()

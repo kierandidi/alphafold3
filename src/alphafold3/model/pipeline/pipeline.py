@@ -194,6 +194,10 @@ class WholePdbPipeline:
         struct=struct,
         allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
         allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        include_bond_types=(
+            mmcif_names.COVALENT_BOND,
+            mmcif_names.DISULFIDE_BRIDGE,
+        ),
         allow_multiple_bonds_per_atom=True,
         include_intra_chain_polymer=True,
     )
