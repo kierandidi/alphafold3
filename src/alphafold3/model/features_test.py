@@ -192,8 +192,9 @@ def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates(
       random_seed=1,
   )
 
-  gather_mask = batch['tokens_to_ligand_ligand_bonds:gather_mask']
-  gather_idxs = batch['tokens_to_ligand_ligand_bonds:gather_idxs']
+  gather = batch.ligand_ligand_bond_info.tokens_to_ligand_ligand_bonds
+  gather_mask = gather.gather_mask
+  gather_idxs = gather.gather_idxs
   valid = np.flatnonzero(gather_mask.all(axis=1))
   assert len(valid) == 1
   np.testing.assert_array_equal(gather_idxs[valid[0]], [0, len(sequence) - 1])
@@ -239,5 +240,7 @@ def test_full_pipeline_still_removes_bad_polymer_ligand_bond():
       random_seed=1,
   )
 
-  gather_mask = batch['tokens_to_polymer_ligand_bonds:gather_mask']
+  gather_mask = (
+      batch.polymer_ligand_bond_info.tokens_to_polymer_ligand_bonds.gather_mask
+  )
   assert not gather_mask.all(axis=1).any()
