@@ -77,7 +77,7 @@ See the [installation documentation](docs/installation.md).
 
 The tested cyclic implementation is published on branch
 `feat/cyclic-offset-runtime`. Pin commit
-`f901bbe7772c55363ffd3a0d1071f89a7c1bdc75` for reproducible builds. It changes
+`04477a16ea0738342b0af4dd590b6befb6c5541e` for reproducible builds. It changes
 the AF3 relative-position encoding for an explicitly marked head-to-tail cyclic
 protein chain while leaving ordinary linear inputs unchanged. AF3 and converted
 OpenFold3 weights use the same engine.
@@ -88,10 +88,10 @@ Clone and build it with:
 git clone --branch feat/cyclic-offset-runtime \
   https://github.com/kierandidi/alphafold3.git alphafold3-cyclic-runtime
 cd alphafold3-cyclic-runtime
-git checkout f901bbe7772c55363ffd3a0d1071f89a7c1bdc75
+git checkout 04477a16ea0738342b0af4dd590b6befb6c5541e
 DOCKER_BUILDKIT=1 docker build \
   --ulimit nofile=65536:65536 \
-  --tag alphafold3:cyclic-f901bbe \
+  --tag alphafold3:cyclic-04477a1 \
   --file docker/Dockerfile .
 ```
 
@@ -101,7 +101,7 @@ parameters or a GPU:
 
 ```bash
 docker run --rm --user 65534:65534 --entrypoint /usr/bin/env \
-  alphafold3:cyclic-f901bbe \
+  alphafold3:cyclic-04477a1 \
   /alphafold3_venv/bin/python -c \
   "import alphafold3.cpp; from alphafold3.model import features; assert {'cyclic_period', 'cyclic_position'} <= features.TokenFeatures.__dataclass_fields__.keys()"
 ```
@@ -125,15 +125,24 @@ git clone --branch feat/cyclic-folding-runtime \
   git@github.com:baker-laboratory/RFD4-Proteina-dev.git RFProteina-cyclic
 cd RFProteina-cyclic
 AF3_CYCLIC_SOURCE_REPO=../alphafold3-cyclic-runtime \
-AF3_CYCLIC_OUTPUT_ROOT="$PWD/artifacts/af3-cyclic/f901bbe7772c" \
+AF3_CYCLIC_OUTPUT_ROOT="$PWD/artifacts/af3-cyclic/04477a16ea07" \
   bash scripts/build_cyclic_af3_runtime.sh
-(cd artifacts/af3-cyclic/f901bbe7772c && sha256sum --check SHA256SUMS)
+(cd artifacts/af3-cyclic/04477a16ea07 && sha256sum --check SHA256SUMS)
 ```
 
 The adapter currently enables cyclic offsets for protein chains only. RNA/DNA
 and unmarked chains remain linear. A terminal bond is still passed through the
 normal AF3 input path; the offset feature is additional model context, not a
 replacement for chemical connectivity.
+
+Disulfide and isopeptide macrocycles intentionally keep linear sequence
+offsets: their N/C termini are still free, and multiple crosslinks cannot be
+represented by one circular sequence coordinate. Supply each closure through
+`bondedAtomPairs` (or mmCIF `struct_conn`). The featurizer maps ordinary
+polymer bond atoms to their residue tokens, preserves actual atom tokens for
+atomized OF3 residues, and feeds all such polymer--polymer crosslinks through
+the existing bond embedding. This supports nested or multiple crosslinks
+without falsely wrapping the whole chain.
 
 ### Container images
 
