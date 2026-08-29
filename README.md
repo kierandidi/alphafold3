@@ -77,7 +77,7 @@ See the [installation documentation](docs/installation.md).
 
 The tested cyclic implementation is published on branch
 `feat/cyclic-offset-runtime`. Pin commit
-`dff6742f44567b1739544f346e42d2d252d0f824` for reproducible builds. It changes
+`bec314811b5d929abf9f3dea7bdb8f4195853540` for reproducible builds. It changes
 the AF3 relative-position encoding for an explicitly marked head-to-tail cyclic
 protein chain while leaving ordinary linear inputs unchanged. AF3 and converted
 OpenFold3 weights use the same engine.
@@ -88,10 +88,10 @@ Clone and build it with:
 git clone --branch feat/cyclic-offset-runtime \
   https://github.com/kierandidi/alphafold3.git alphafold3-cyclic-runtime
 cd alphafold3-cyclic-runtime
-git checkout dff6742f44567b1739544f346e42d2d252d0f824
+git checkout bec314811b5d929abf9f3dea7bdb8f4195853540
 DOCKER_BUILDKIT=1 docker build \
   --ulimit nofile=65536:65536 \
-  --tag alphafold3:cyclic-dff6742 \
+  --tag alphafold3:cyclic-bec3148 \
   --file docker/Dockerfile .
 ```
 
@@ -101,7 +101,7 @@ parameters or a GPU:
 
 ```bash
 docker run --rm --user 65534:65534 --entrypoint /usr/bin/env \
-  alphafold3:cyclic-dff6742 \
+  alphafold3:cyclic-bec3148 \
   /alphafold3_venv/bin/python -c \
   "import alphafold3.cpp; from alphafold3.model import features; assert {'cyclic_period', 'cyclic_position'} <= features.TokenFeatures.__dataclass_fields__.keys()"
 ```
@@ -125,9 +125,9 @@ git clone --branch feat/cyclic-folding-runtime \
   git@github.com:baker-laboratory/RFD4-Proteina-dev.git RFProteina-cyclic
 cd RFProteina-cyclic
 AF3_CYCLIC_SOURCE_REPO=../alphafold3-cyclic-runtime \
-AF3_CYCLIC_OUTPUT_ROOT="$PWD/artifacts/af3-cyclic/dff6742f4456" \
+AF3_CYCLIC_OUTPUT_ROOT="$PWD/artifacts/af3-cyclic/bec314811b5d" \
   bash scripts/build_cyclic_af3_runtime.sh
-(cd artifacts/af3-cyclic/dff6742f4456 && sha256sum --check SHA256SUMS)
+(cd artifacts/af3-cyclic/bec314811b5d && sha256sum --check SHA256SUMS)
 ```
 
 The adapter currently enables cyclic offsets for protein chains only. RNA/DNA
