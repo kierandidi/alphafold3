@@ -197,3 +197,47 @@ def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates(
   valid = np.flatnonzero(gather_mask.all(axis=1))
   assert len(valid) == 1
   np.testing.assert_array_equal(gather_idxs[valid[0]], [0, len(sequence) - 1])
+
+
+def test_full_pipeline_still_removes_bad_polymer_ligand_bond():
+  sequence = 'CAAAA'
+  fold_input = folding_input.Input(
+      name='bad_polymer_ligand_bond',
+      chains=(
+          folding_input.ProteinChain(
+              id='A',
+              sequence=sequence,
+              ptms=(),
+              paired_msa='',
+              unpaired_msa=f'>query\n{sequence}\n',
+              templates=(),
+          ),
+          folding_input.Ligand(id='L', ccd_ids=('ZN',)),
+      ),
+      rng_seeds=(1,),
+      bonded_atom_pairs=((('A', 1, 'SG'), ('L', 1, 'ZN')),),
+  )
+  ccd = chemical_components.Ccd()
+  structure = fold_input.to_structure(ccd)
+  endpoint = np.flatnonzero(
+      (structure.chain_id == 'L') & (structure.atom_name == 'ZN')
+  )
+  assert len(endpoint) == 1
+  coords = structure.coords.copy()
+  coords[endpoint[0]] += np.asarray([100.0, 0.0, 0.0])
+  structure = structure.copy_and_update_coords(coords)
+
+  batch = pipeline.WholePdbPipeline(
+      config=pipeline.WholePdbPipeline.Config(buckets=[16])
+  ).process_structure(
+      structure,
+      random_state=np.random.RandomState(1),
+      ccd=ccd,
+      unpaired_msa_by_chain_id={'A': f'>query\n{sequence}\n'},
+      paired_msa_by_chain_id={'A': ''},
+      templates_by_chain_id={'A': ()},
+      random_seed=1,
+  )
+
+  gather_mask = batch['tokens_to_polymer_ligand_bonds:gather_mask']
+  assert not gather_mask.all(axis=1).any()
