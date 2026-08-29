@@ -186,6 +186,18 @@ class WholePdbPipeline:
     logging_name = f'{struct.name}, random_seed={random_seed}'
     logging.info('Processing %s', logging_name)
 
+    # Capture explicit polymer crosslinks before coordinate-based cleaning.
+    # FoldInput bonds are user constraints and may intentionally begin open;
+    # unrelated malformed bonds should still receive the standard cleanup.
+    polymer_polymer_bonds = inter_chain_bonds.get_bond_layout(
+        bond_threshold=np.inf,
+        struct=struct,
+        allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        allow_multiple_bonds_per_atom=True,
+        include_intra_chain_polymer=True,
+    )
+
     # Clean structure.
     cleaned_struc = structure_cleaning.clean_structure(
         struct,
@@ -197,11 +209,9 @@ class WholePdbPipeline:
         filter_leaving_atoms=self._config.drop_ligand_leaving_atoms,
         only_glycan_ligands_for_leaving_atoms=True,
         covalent_bonds_only=True,
-        # Inert unless collected below via include_intra_chain_polymer.
+        # The feature layout was captured above; retain valid rows in output.
         remove_polymer_polymer_bonds=False,
-        # FoldInput bonds are explicit user constraints. Do not discard a
-        # macrocycle merely because the starting coordinates are unclosed.
-        remove_bad_bonds=False,
+        remove_bad_bonds=True,
         fix_standalone_glycans=self._config.fix_standalone_glycans,
     )
 
@@ -215,19 +225,6 @@ class WholePdbPipeline:
             only_glycan_ligands=False,
             allow_multiple_bonds_per_atom=True,
         )
-    )
-
-    # Neither layout above claims polymer-polymer bonds. Keep explicit
-    # crosslinks (head-to-tail, disulfide, isopeptide, or modified-residue
-    # links); the bond feature maps ordinary residues to their representative
-    # tokens and addresses atomized residues by the actual bonded atom.
-    polymer_polymer_bonds = inter_chain_bonds.get_bond_layout(
-        bond_threshold=np.inf,
-        struct=cleaned_struc,
-        allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
-        allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
-        allow_multiple_bonds_per_atom=True,
-        include_intra_chain_polymer=True,
     )
 
     # If empty replace with None as this causes errors downstream.

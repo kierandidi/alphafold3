@@ -142,7 +142,9 @@ represented by one circular sequence coordinate. Supply each closure through
 polymer bond atoms to their residue tokens, preserves actual atom tokens for
 atomized OF3 residues, and feeds all such polymer--polymer crosslinks through
 the existing bond embedding. This supports nested or multiple crosslinks
-without falsely wrapping the whole chain.
+without falsely wrapping the whole chain. Explicit polymer crosslinks are not
+discarded when the starting coordinates exceed a normal bond length; an open
+design can therefore still request a closed prediction.
 
 ### Container images
 
