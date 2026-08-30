@@ -172,9 +172,16 @@ def test_pipeline_keeps_atomized_modified_residue_backbone_link():
   residue_tokenized = pipeline._without_linear_polymer_backbone_bonds(
       structure, bonds, flatten_non_standard_residues=False
   )
+  of3_atomized = pipeline._without_linear_polymer_backbone_bonds(
+      structure,
+      bonds,
+      flatten_non_standard_residues=True,
+      of3_weights=True,
+  )
 
   assert atomized.atom_name.tolist() == [['C', 'N']]
   assert not residue_tokenized.atom_name.size
+  assert not of3_atomized.atom_name.size
 
 
 def test_pipeline_keeps_dipeptide_head_to_tail_link():
@@ -208,7 +215,10 @@ def test_pipeline_keeps_dipeptide_head_to_tail_link():
   )
 
   filtered = pipeline._without_linear_polymer_backbone_bonds(
-      structure, bonds, flatten_non_standard_residues=True
+      structure,
+      bonds,
+      flatten_non_standard_residues=True,
+      of3_weights=True,
   )
 
   assert filtered.atom_name.tolist() == [['C', 'N']]
@@ -252,6 +262,7 @@ def test_full_pipeline_embeds_explicit_polymer_macrocycle(sequence, bond_atoms):
   np.testing.assert_array_equal(gather_idxs[valid[0]], [0, len(sequence) - 1])
 
 
+@pytest.mark.parametrize('of3_weights', [False, True])
 @pytest.mark.parametrize(
     ('sequence', 'bond_atoms', 'bond_type'),
     [
@@ -260,7 +271,7 @@ def test_full_pipeline_embeds_explicit_polymer_macrocycle(sequence, bond_atoms):
     ],
 )
 def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates(
-    sequence, bond_atoms, bond_type
+    sequence, bond_atoms, bond_type, of3_weights
 ):
   chain = folding_input.ProteinChain(
       id='A',
@@ -297,7 +308,9 @@ def test_full_pipeline_keeps_explicit_bond_with_unclosed_input_coordinates(
   structure = structure.copy_and_update_coords(coords)
 
   batch = pipeline.WholePdbPipeline(
-      config=pipeline.WholePdbPipeline.Config(buckets=[16])
+      config=pipeline.WholePdbPipeline.Config(
+          buckets=[16], of3_weights=of3_weights
+      )
   ).process_structure(
       structure,
       random_state=np.random.RandomState(1),
