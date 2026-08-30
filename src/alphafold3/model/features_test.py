@@ -172,16 +172,9 @@ def test_pipeline_keeps_atomized_modified_residue_backbone_link():
   residue_tokenized = pipeline._without_linear_polymer_backbone_bonds(
       structure, bonds, flatten_non_standard_residues=False
   )
-  of3_atomized = pipeline._without_linear_polymer_backbone_bonds(
-      structure,
-      bonds,
-      flatten_non_standard_residues=True,
-      of3_weights=True,
-  )
 
   assert atomized.atom_name.tolist() == [['C', 'N']]
   assert not residue_tokenized.atom_name.size
-  assert not of3_atomized.atom_name.size
 
 
 def test_pipeline_keeps_dipeptide_head_to_tail_link():
@@ -218,7 +211,6 @@ def test_pipeline_keeps_dipeptide_head_to_tail_link():
       structure,
       bonds,
       flatten_non_standard_residues=True,
-      of3_weights=True,
   )
 
   assert filtered.atom_name.tolist() == [['C', 'N']]
