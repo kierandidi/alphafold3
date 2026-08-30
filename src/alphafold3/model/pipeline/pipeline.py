@@ -48,14 +48,16 @@ def _without_linear_polymer_backbone_bonds(
     bond_layout: atom_layout.AtomLayout,
     *,
     flatten_non_standard_residues: bool,
+    of3_weights: bool = False,
 ) -> atom_layout.AtomLayout:
   """Remove sequence-adjacent backbone links from explicit crosslink features.
 
   Deposited structures can enumerate every peptide or phosphodiester bond.
   Those links are already represented by sequence adjacency for single-token
-  residues and must not be fed through the ligand-bond channel. Backbone links
-  involving atomized modified residues remain explicit because residue
-  adjacency does not encode them. Non-adjacent crosslinks also remain explicit.
+  residues and must not be fed through the ligand-bond channel. AF3 keeps
+  atomized modified-residue backbones explicit, while OF3 represents every
+  sequence-adjacent backbone link implicitly. Non-adjacent crosslinks remain
+  explicit for both weight families.
   """
   if not bond_layout.atom_name.size:
     return bond_layout
@@ -95,7 +97,8 @@ def _without_linear_polymer_backbone_bonds(
     chain_types = set(bond_layout.chain_type[index])
     residue_by_atom = {atom_a: position_a, atom_b: position_b}
     peptide_backbone_is_implicit = (
-        not flatten_non_standard_residues
+        of3_weights
+        or not flatten_non_standard_residues
         or all(
             res_name in residue_names.PROTEIN_TYPES_WITH_UNKNOWN
             or res_name == residue_names.MSE
@@ -103,7 +106,8 @@ def _without_linear_polymer_backbone_bonds(
         )
     )
     nucleic_backbone_is_implicit = (
-        not flatten_non_standard_residues
+        of3_weights
+        or not flatten_non_standard_residues
         or all(
             res_name in residue_names.NUCLEIC_TYPES_WITH_2_UNKS
             for res_name in (res_name_a, res_name_b)
@@ -290,6 +294,7 @@ class WholePdbPipeline:
         struct,
         polymer_polymer_bonds,
         flatten_non_standard_residues=self._config.flatten_non_standard_residues,
+        of3_weights=self._config.of3_weights,
     )
 
     # Clean structure.
