@@ -193,6 +193,11 @@ def create_relative_encoding(
   left_residue_index = residue_index[:, None]
   right_residue_index = residue_index[None, :]
 
+  left_cyclic_period = seq_features.cyclic_period[:, None]
+  right_cyclic_period = seq_features.cyclic_period[None, :]
+  left_cyclic_position = seq_features.cyclic_position[:, None]
+  right_cyclic_position = seq_features.cyclic_position[None, :]
+
   left_token_index = token_index[:, None]
   right_token_index = token_index[None, :]
 
@@ -204,6 +209,24 @@ def create_relative_encoding(
 
   # Embed relative positions using a one-hot embedding of distance along chain
   offset = left_residue_index - right_residue_index
+  cyclic_pair = (
+      (left_asym_id == right_asym_id)
+      & (left_cyclic_period > 0)
+      & (left_cyclic_period == right_cyclic_period)
+  )
+  # Use the shortest signed path around a cyclic chain. The sign convention
+  # matches AfCycDesign/ColabDesign's ``offset_type=2`` implementation: a path
+  # that crosses the head-to-tail bond has the opposite sign from the linear
+  # path. Ties retain the linear path for deterministic even-length rings.
+  cyclic_linear_offset = left_cyclic_position - right_cyclic_position
+  linear_distance = jnp.abs(cyclic_linear_offset)
+  wrapped_distance = left_cyclic_period - linear_distance
+  cyclic_offset = jnp.where(
+      wrapped_distance < linear_distance,
+      -wrapped_distance * jnp.sign(cyclic_linear_offset),
+      cyclic_linear_offset,
+  )
+  offset = jnp.where(cyclic_pair, cyclic_offset, offset)
   clipped_offset = jnp.clip(
       offset + max_relative_idx, min=0, max=2 * max_relative_idx
   )

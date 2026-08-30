@@ -9,7 +9,7 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "alphafold3"
+name = "alphafold3-open"
 dynamic = ["version"]
 requires-python = ">=3.12"
 readme = "README.md"
@@ -48,6 +48,7 @@ environments = [
 ]
 
 [tool.scikit-build]
+wheel.packages = ["src/alphafold3"]
 wheel.exclude = [
     "**.pyx",
     "**/CMakeLists.txt",

@@ -920,6 +920,15 @@ class TokenFeatures:
   entity_id: xnp_ndarray
   sym_id: xnp_ndarray
 
+  # Number of residues in a head-to-tail cyclic polymer chain. A value of 0
+  # keeps the standard linear relative-position encoding. This is populated by
+  # runtimes that can identify an explicit terminal C--N bond in the input.
+  cyclic_period: xnp_ndarray
+  # Zero-based residue ordinal within a cyclic chain. This is separate from
+  # residue_index because structure inputs may preserve non-contiguous residue
+  # numbering, while circular distance is defined by sequence order.
+  cyclic_position: xnp_ndarray
+
   # token type features
   is_protein: xnp_ndarray
   is_rna: xnp_ndarray
@@ -994,6 +1003,8 @@ class TokenFeatures:
         asym_id=_pad_to(asym_id, (padding_shapes.num_tokens,)),
         entity_id=_pad_to(entity_id, (padding_shapes.num_tokens,)),
         sym_id=_pad_to(sym_id, (padding_shapes.num_tokens,)),
+        cyclic_period=np.zeros(padding_shapes.num_tokens, dtype=np.int32),
+        cyclic_position=np.zeros(padding_shapes.num_tokens, dtype=np.int32),
         seq_length=seq_length,
         is_protein=_pad_to(is_protein, (padding_shapes.num_tokens,)),  # pyrefly: ignore[bad-argument-type]
         is_rna=_pad_to(is_rna, (padding_shapes.num_tokens,)),  # pyrefly: ignore[bad-argument-type]
@@ -1015,6 +1026,21 @@ class TokenFeatures:
         entity_id=batch['entity_id'],
         asym_id=batch['asym_id'],
         sym_id=batch['sym_id'],
+        # ``from_data_dict`` executes inside the jitted model path as well as
+        # during NumPy-side featurisation.  Do not use ``dict.get`` with a
+        # NumPy fallback here: its default is evaluated eagerly and therefore
+        # attempts to convert ``residue_index`` when it is a JAX tracer, even
+        # when ``cyclic_period`` is present in the batch.
+        cyclic_period=(
+            batch['cyclic_period']
+            if 'cyclic_period' in batch
+            else jnp.zeros_like(batch['residue_index'])
+        ),
+        cyclic_position=(
+            batch['cyclic_position']
+            if 'cyclic_position' in batch
+            else batch['residue_index']
+        ),
         seq_length=batch['seq_length'],
         is_protein=batch['is_protein'],
         is_rna=batch['is_rna'],
@@ -1033,6 +1059,8 @@ class TokenFeatures:
         'entity_id': self.entity_id,
         'asym_id': self.asym_id,
         'sym_id': self.sym_id,
+        'cyclic_period': self.cyclic_period,
+        'cyclic_position': self.cyclic_position,
         'seq_length': self.seq_length,
         'is_protein': self.is_protein,
         'is_rna': self.is_rna,
@@ -1119,6 +1147,68 @@ jax.tree_util.register_dataclass(
 )
 
 
+def _atom_keys(layout: atom_layout.AtomLayout) -> list[tuple[str, int, str]]:
+  """(chain_id, res_id, atom_name) of every entry in ``layout``, flattened."""
+  return list(
+      zip(
+          layout.chain_id.ravel().tolist(),
+          layout.res_id.ravel().tolist(),
+          layout.atom_name.ravel().tolist(),
+      )
+  )
+
+
+def _bond_atom_is_token(
+    all_tokens: atom_layout.AtomLayout,
+    bond_layout: atom_layout.AtomLayout,
+) -> np.ndarray:
+  """Mask of bond ends whose own atom is a token, i.e. whose residue is atomized.
+
+  Args:
+    all_tokens: AtomLayout for tokens; shape (num_tokens,).
+    bond_layout: Bond ends to test; shape (num_bonds, 2).
+
+  Returns:
+    Boolean array shaped like ``bond_layout.atom_name``.
+  """
+  tokens = set(_atom_keys(all_tokens))
+  flat = [key in tokens for key in _atom_keys(bond_layout)]
+  return np.array(flat, dtype=bool).reshape(bond_layout.atom_name.shape)
+
+
+def _bond_layout_at_token_centres(
+    all_tokens: atom_layout.AtomLayout,
+    bond_layout: atom_layout.AtomLayout,
+) -> atom_layout.AtomLayout:
+  """Address polymer bond ends by their residue token.
+
+  Standard polymer residues are represented by one token at CA (proteins) or
+  C1' (nucleic acids), whereas an atomized modified residue exposes the actual
+  bonded atom as a token.  Preserve the latter and remap only non-token bond
+  atoms.  This makes an explicit polymer--polymer crosslink visible to the
+  existing bond embedding without changing tokenization or pair dimensions.
+  """
+  if bond_layout.chain_type is None:
+    raise ValueError('Bond layout must carry chain_type to locate polymer tokens')
+
+  atom_names = bond_layout.atom_name.copy()
+  is_own_token = _bond_atom_is_token(all_tokens, bond_layout)
+  peptide_mask = np.isin(
+      bond_layout.chain_type, list(mmcif_names.PEPTIDE_CHAIN_TYPES)
+  )
+  nucleic_mask = np.isin(
+      bond_layout.chain_type,
+      list(mmcif_names.NUCLEIC_ACID_CHAIN_TYPES) + [mmcif_names.OTHER_CHAIN],
+  )
+  atom_names[peptide_mask & ~is_own_token] = 'CA'
+  atom_names[nucleic_mask & ~is_own_token] = "C1'"
+  return atom_layout.AtomLayout(
+      atom_name=atom_names,
+      res_id=bond_layout.res_id,
+      chain_id=bond_layout.chain_id,
+  )
+
+
 @dataclasses.dataclass(frozen=True)
 class PolymerLigandBondInfo:
   """Contains information about polymer-ligand bonds."""
@@ -1150,21 +1240,8 @@ class PolymerLigandBondInfo:
     """
 
     if bond_layout is not None:
-      # Must convert to list before calling np.isin, will not work raw.
-      peptide_types = list(mmcif_names.PEPTIDE_CHAIN_TYPES)
-      nucleic_types = list(mmcif_names.NUCLEIC_ACID_CHAIN_TYPES) + [
-          mmcif_names.OTHER_CHAIN
-      ]
-      # These atom renames are so that we can use the atom layout code with
-      # all_tokens, which only has a single atom per token.
-      atom_names = bond_layout.atom_name.copy()
-      atom_names[np.isin(bond_layout.chain_type, peptide_types)] = 'CA'  # pyrefly: ignore[bad-argument-type]
-      atom_names[np.isin(bond_layout.chain_type, nucleic_types)] = "C1'"  # pyrefly: ignore[bad-argument-type]
-      adjusted_bond_layout = atom_layout.AtomLayout(
-          atom_name=atom_names,
-          res_id=bond_layout.res_id,
-          chain_id=bond_layout.chain_id,
-          chain_type=bond_layout.chain_type,
+      adjusted_bond_layout = _bond_layout_at_token_centres(
+          all_tokens, bond_layout
       )
       # Remove bonds that are not in the crop.
       cropped_tokens_to_bonds = atom_layout.compute_gather_idxs(
@@ -1244,7 +1321,7 @@ jax.tree_util.register_dataclass(
 
 @dataclasses.dataclass(frozen=True)
 class LigandLigandBondInfo:
-  """Contains information about the location of ligand-ligand bonds."""
+  """Contains token contacts for ligand and explicit polymer crosslinks."""
 
   tokens_to_ligand_ligand_bonds: atom_layout.GatherInfo
 
@@ -1254,6 +1331,7 @@ class LigandLigandBondInfo:
       all_tokens: atom_layout.AtomLayout,
       bond_layout: atom_layout.AtomLayout | None,
       padding_shapes: PaddingShapes,
+      polymer_polymer_bonds: atom_layout.AtomLayout | None = None,
   ) -> Self:
     """Computes the InterChainBondInfo features.
 
@@ -1261,6 +1339,8 @@ class LigandLigandBondInfo:
       all_tokens: AtomLayout for tokens; shape (num_tokens,).
       bond_layout: Bond layout for ligand-ligand bonds.
       padding_shapes: Padding shapes.
+      polymer_polymer_bonds: Explicit polymer-polymer crosslinks. Their bond
+        atoms are mapped to residue tokens unless the residues are atomized.
 
     Returns:
       A LigandLigandBondInfo object.
@@ -1312,6 +1392,19 @@ class LigandLigandBondInfo:
           atom_name=np.array([], dtype=object).reshape(s),
           res_id=np.array([], dtype=int).reshape(s),
           chain_id=np.array([], dtype=object).reshape(s),
+      )
+    if polymer_polymer_bonds is not None and polymer_polymer_bonds.atom_name.size:
+      polymer_token_bonds = _bond_layout_at_token_centres(
+          all_tokens, polymer_polymer_bonds
+      )
+      adjusted_bond_layout = atom_layout.AtomLayout(
+          **{
+              field: np.concatenate([
+                  getattr(adjusted_bond_layout, field),
+                  getattr(polymer_token_bonds, field),
+              ])
+              for field in ('atom_name', 'res_id', 'chain_id')
+          }
       )
     # 10 x num_tokens as max_inter_bonds_ratio + max_intra_bonds_ration = 2.061.
     adjusted_bond_layout = adjusted_bond_layout.copy_and_pad_to(

@@ -2180,6 +2180,37 @@ class Structure(table.Database):
 
     return chain_seqs
 
+  def chain_res_ids(
+      self, *, include_missing_residues: bool = True
+  ) -> Mapping[str, np.ndarray]:
+    """A mapping from internal chain ID to that chain's residue IDs, in order.
+
+    The residue IDs are ``res_id`` (``label_seq_id`` for polymers) and are
+    aligned one-to-one with the sequences returned by
+    :py:meth:`chain_single_letter_sequence` and
+    :py:meth:`chain_res_name_sequence` when called with the same
+    ``include_missing_residues``. Gaps in the numbering are preserved.
+
+    Args:
+      include_missing_residues: Whether to include residues with no atoms.
+
+    Returns:
+      A mapping from (internal) chain IDs to an array of residue IDs.
+    """
+    res_table = (
+        self._residues if include_missing_residues else self.present_residues
+    )
+    residue_chain_boundaries = _get_change_indices(res_table.chain_key)
+    boundaries = self._iter_residue_ranges(
+        residue_chain_boundaries, count_unresolved=include_missing_residues
+    )
+    chain_keys = res_table.chain_key[residue_chain_boundaries]
+    chain_ids = self._chains.apply_array_to_column('id', chain_keys)
+    return {
+        chain_ids[idx]: res_table.id[start:end]
+        for idx, (start, end) in enumerate(boundaries)
+    }
+
   def fix_non_standard_polymer_res(
       self,
       res_mapper: Callable[

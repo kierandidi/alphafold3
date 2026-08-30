@@ -671,12 +671,67 @@ Or you can simply fully omit the `templates` field thus setting it implicitly to
 }
 ```
 
+### MSA via ColabFold/MMseqs2 Server
+
+If you do not have the genetic databases installed locally, you can use the
+public [ColabFold](https://colabfold.mmseqs.com/) MMseqs2 server to generate
+MSAs on the fly:
+
+```bash
+python run_alphafold.py \
+  --json_path=my_input.json \
+  --model_dir=... \
+  --output_dir=... \
+  --use_msa_server \
+  --norun_data_pipeline
+```
+
+The `--use_msa_server` flag queries `https://api.colabfold.com` and populates
+`unpairedMsa` (and `pairedMsa` for multi-chain protein jobs) before the model
+runs. No local databases are required, so `--norun_data_pipeline` should be
+passed to skip the Jackhmmer/Nhmmer search stage.
+
+**Notes:**
+
+*   **Protein only.** The ColabFold server covers UniRef30 + environmental
+    databases for proteins. RNA chains automatically receive a query-sequence-only
+    stub (MSA-free), and DNA chains are unaffected.
+*   **JSON preparation.** Leave `unpairedMsa` and `pairedMsa` unset (or `null`)
+    for chains whose MSA should come from the server. Chains that already have
+    an MSA set in the JSON are left unchanged.
+*   **Saved MSA files.** After a successful run, the fetched MSAs are written to
+    `<output_dir>/<job_name>/msas/` as `<chain_id>_unpaired.a3m` and (for
+    multi-protein jobs) `<chain_id>_paired.a3m`. You can reuse these files in
+    subsequent runs by embedding them in the JSON to avoid re-querying the server.
+*   **Rate limits.** The public server is a shared resource. For large batches
+    prefer local databases or a self-hosted ColabFold instance (pass its URL via
+    `--msa_server_url`).
+*   **Homo-oligomers.** Use a list of chain IDs for the same sequence to
+    model homo-oligomers. The server is queried once per unique sequence:
+
+    ```json
+    "protein": {
+      "id": ["A", "B", "C"],
+      "sequence": "MKTAYIAKQRQISFVKSHFSRQ...",
+      "templates": []
+    }
+    ```
+
 ## Bonds
 
-To manually specify covalent bonds, use the `bondedAtomPairs` field. This is
-intended for modelling covalent ligands, and for defining multi-CCD ligands
-(e.g. glycans). Defining covalent bonds between or within polymer entities is
-not currently supported.
+To manually specify covalent bonds, use the `bondedAtomPairs` field. Upstream
+AF3 uses this for covalent ligands and multi-CCD ligands (e.g. glycans). This
+fork additionally embeds explicit bonds between or within polymer entities,
+including disulfide and isopeptide macrocycle closures. Ordinary protein
+residues address the bond through their CA tokens, nucleic acids through C1',
+and atomized modified residues through the actual bonded-atom tokens.
+
+An explicit polymer bond is independent of circular sequence offsets. In the
+RFProteina batch adapter, only a true terminal protein C--N backbone closure
+should be listed in the manifest's `cyclic_chain_ids`; a chain cyclized through
+SG--SG or side-chain amide atoms must retain linear sequence offsets. If a
+terminal ring also carries a side-chain crosslink, supply both features. The
+standard AF3 JSON schema does not itself expose the cyclic-offset token fields.
 
 Bonds are specified as pairs of (source atom, destination atom), with each atom
 being uniquely addressed using 3 fields:

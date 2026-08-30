@@ -186,9 +186,33 @@ class DiffusionHead(hk.Module):
         name='single_cond_initial_projection',
     )(single_cond)
 
-    noise_embedding = noise_level_embeddings.noise_embeddings(
-        sigma_scaled_noise_level=noise_level / SIGMA_DATA
-    )
+    if self.global_config.of3_weights:
+      # When using ported OF3 weights the Fourier constants differ from AF3's
+      # hardcoded values (JAX vs PyTorch RNG produce different numbers for
+      # seed=42). Load them as proper Haiku parameters so they travel with the
+      # params file rather than being monkey-patched at runtime.
+      _dim = len(noise_level_embeddings._WEIGHT)
+      fourier_weight = hk.get_parameter(
+          'fourier_embedding_weight',
+          shape=[_dim],
+          dtype=jnp.float32,
+          init=hk.initializers.Constant(0.0),
+      )
+      fourier_bias = hk.get_parameter(
+          'fourier_embedding_bias',
+          shape=[_dim],
+          dtype=jnp.float32,
+          init=hk.initializers.Constant(0.0),
+      )
+      noise_embedding = noise_level_embeddings.noise_embeddings(
+          sigma_scaled_noise_level=noise_level / SIGMA_DATA,
+          weight=fourier_weight,
+          bias=fourier_bias,
+      )
+    else:
+      noise_embedding = noise_level_embeddings.noise_embeddings(
+          sigma_scaled_noise_level=noise_level / SIGMA_DATA
+      )
     single_cond += hm.Linear(
         self.config.conditioning.seq_channel,
         precision='highest',
@@ -342,7 +366,9 @@ def sample(
     t_hat = noise_level_prev * (1 + gamma)
 
     noise_scale = config.noise_scale * jnp.sqrt(
-        # Don't take sqrt of tiny negative number (happens when running on CPU).
+        # Don't take sqrt of a tiny negative number or of -0.0 (happens when
+        # running on CPU, or when gamma=0 so t_hat == noise_level_prev and
+        # XLA's sqrt(-0.0) returns NaN).
         jnp.maximum(t_hat**2 - noise_level_prev**2, 0.0)
     )
     noise = noise_scale * jax.random.normal(key_noise, positions.shape)

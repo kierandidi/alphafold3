@@ -19,6 +19,10 @@
 
 FROM nvidia/cuda:12.6.3-base-ubuntu24.04
 
+LABEL org.opencontainers.image.source="https://github.com/kierandidi/alphafold3" \
+      org.opencontainers.image.revision="f901bbe7772c55363ffd3a0d1071f89a7c1bdc75" \
+      org.opencontainers.image.description="AlphaFold3/OpenFold3 runtime with explicit cyclic-polymer relative offsets"
+
 # Some RUN statements are combined together to make Docker build run faster.
 # Get latest package listing, install python, git, wget, compilers and libs.
 # * git is required for pyproject.toml toolchain's use of CMakeLists.txt.
@@ -69,6 +73,10 @@ RUN (cd /hmmer_build/hmmer-3.4 && ./configure --prefix /hmmer) && \
 # Copy the AlphaFold 3 source code from the local machine to the container and
 # set the working directory to there.
 COPY . /app/alphafold
+# Portable runtimes execute under the allocation user's numeric UID rather than
+# root.  Shared-repository umasks can make the build context group-private, so
+# normalize the copied source before it becomes an immutable image layer.
+RUN chmod -R a+rX /app/alphafold
 WORKDIR /app/alphafold
 
 # Install the exact dependency tree using uv and cache the build artifacts.
@@ -81,8 +89,18 @@ ARG UV_EXTRAS=""
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_LINK_MODE=copy uv sync --frozen --all-groups --no-editable $UV_EXTRAS
 
+# The one-time OpenFold3 converter reads a PyTorch checkpoint. Keep the
+# inference runtime JAX-based, but include pinned CPU-only torch so this same
+# image can reproducibly convert and verify OpenFold3 weights.
+RUN uv pip install \
+    --python $UV_PROJECT_ENVIRONMENT/bin/python \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.13.0
+
 # Build chemical components database (this binary was installed by uv sync).
-RUN uv run build_data
+RUN uv run build_data \
+    && uv cache clean \
+    && rm -rf /root/.cache
 
 # To work around a known XLA issue causing the compilation time to greatly
 # increase, the following environment variable setting XLA flags must be enabled

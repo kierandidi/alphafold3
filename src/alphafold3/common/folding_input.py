@@ -994,6 +994,14 @@ class Input:
       present in the default CCD and thus define arbitrary new ligands. This is
       more expressive than SMILES since it allows to name all atoms within the
       ligand which in turn makes it possible to define bonds using those atoms.
+    residue_numbering: Optional per-chain residue numbering (``res_id`` /
+      ``label_seq_id``) in residue order, for polymer chains whose input
+      numbering has gaps (e.g. a structural crop). When set for a chain,
+      :py:meth:`to_structure` stamps these IDs onto the residues verbatim
+      (preserving gaps) instead of renumbering to a contiguous ``1..N``, so the
+      featurised ``residue_index`` reflects the input. ``None`` (or a chain
+      absent from the mapping) keeps the default contiguous numbering. Populated
+      by :py:meth:`from_mmcif`; unused by the JSON path.
   """
 
   name: str
@@ -1001,6 +1009,10 @@ class Input:
   rng_seeds: Sequence[int]
   bonded_atom_pairs: Sequence[tuple[BondAtomId, BondAtomId]] | None = None
   user_ccd: str | None = None
+  # Excluded from __hash__ (a Mapping is unhashable) but kept in __eq__.
+  residue_numbering: Mapping[str, Sequence[int]] | None = dataclasses.field(
+      default=None, hash=False
+  )
 
   def __post_init__(self):
     if not self.rng_seeds:
@@ -1029,6 +1041,16 @@ class Input:
     if self.bonded_atom_pairs is not None:
       object.__setattr__(
           self, 'bonded_atom_pairs', tuple(self.bonded_atom_pairs)
+      )
+
+    if self.residue_numbering is not None:
+      object.__setattr__(
+          self,
+          'residue_numbering',
+          {
+              chain_id: tuple(int(res_id) for res_id in numbering)
+              for chain_id, numbering in self.residue_numbering.items()
+          },
       )
 
     if self.user_ccd is not None:
@@ -1339,8 +1361,13 @@ class Input:
     sequences = struc.chain_single_letter_sequence(
         include_missing_residues=True
     )
+    # Per-chain res_id (label_seq_id), aligned 1:1 with `sequences` above (same
+    # include_missing_residues). Captured so gaps in the input numbering (e.g. a
+    # crop) survive the sequence-only Input round-trip into `residue_index`.
+    res_ids_by_chain = struc.chain_res_ids(include_missing_residues=True)
 
     chains = []
+    residue_numbering: dict[str, Sequence[int]] = {}
     for chain_id, chain_type in zip(
         struc.group_by_chain.chain_id, struc.group_by_chain.chain_type
     ):
@@ -1378,6 +1405,16 @@ class Input:
             if orig != fixed
         ]
 
+        chain_res_ids = [int(res_id) for res_id in res_ids_by_chain[chain_id]]
+        # res_id -> position lookup (to_structure) and relpos both require
+        # unique numbering within a chain; fail loudly rather than mis-map.
+        if len(set(chain_res_ids)) != len(chain_res_ids):
+          raise ValueError(
+              f'Chain {chain_id} has duplicate residue IDs {chain_res_ids};'
+              ' residue numbering (e.g. from insertion codes) must be unique.'
+          )
+        residue_numbering[chain_id] = chain_res_ids
+
         if chain_type == mmcif_names.PROTEIN_CHAIN:
           chains.append(
               ProteinChain(id=chain_id, sequence=sequence, ptms=modifications)
@@ -1409,6 +1446,7 @@ class Input:
         # mmCIFs don't store rng seeds, so we need to sample one here.
         rng_seeds=[_sample_rng_seed()],
         bonded_atom_pairs=bonded_atom_pairs or None,
+        residue_numbering=residue_numbering or None,
     )
 
   def to_structure(self, ccd: chemical_components.Ccd) -> structure.Structure:
@@ -1459,6 +1497,20 @@ class Input:
           else:
             raise ValueError('Ligand must have one of CCD ID or SMILES set.')
 
+    # Per-chain residue numbering (with gaps) aligned to `sequences`; None for
+    # chains without an override, so from_sequences_and_bonds keeps 1..N there.
+    res_ids = None
+    if self.residue_numbering is not None:
+      res_ids = [self.residue_numbering.get(cid) for cid in ids]
+
+    # res_id -> 0-based position within a chain. bonded_atom_pairs reference
+    # residues by res_id, which is contiguous 1..N unless residue_numbering
+    # carries gaps; in that case map through the numbering rather than assuming
+    # res_id - 1 == position.
+    def _res_position(chain_id: str, res_id: int) -> int:
+      numbering = None if self.residue_numbering is None else self.residue_numbering.get(chain_id)
+      return res_id - 1 if numbering is None else list(numbering).index(res_id)
+
     # Remap bond chain IDs from chain IDs to chain indices and convert to
     # 0-based residue indexing.
     bonded_atom_pairs = []
@@ -1466,8 +1518,16 @@ class Input:
     if self.bonded_atom_pairs is not None:
       for bond_beg, bond_end in self.bonded_atom_pairs:
         bonded_atom_pairs.append((
-            (chain_indices[bond_beg[0]], bond_beg[1] - 1, bond_beg[2]),
-            (chain_indices[bond_end[0]], bond_end[1] - 1, bond_end[2]),
+            (
+                chain_indices[bond_beg[0]],
+                _res_position(bond_beg[0], bond_beg[1]),
+                bond_beg[2],
+            ),
+            (
+                chain_indices[bond_end[0]],
+                _res_position(bond_end[0], bond_end[1]),
+                bond_end[2],
+            ),
         ))
 
     return structure.from_sequences_and_bonds(
@@ -1475,6 +1535,7 @@ class Input:
         chain_types=poly_types,
         sequence_formats=formats,
         chain_ids=ids,
+        res_ids=res_ids,
         bonded_atom_pairs=bonded_atom_pairs,
         ccd=ccd,
         name=self.sanitised_name(),

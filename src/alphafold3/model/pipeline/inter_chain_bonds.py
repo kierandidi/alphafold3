@@ -217,6 +217,7 @@ def get_bond_layout(
     include_bond_types: Collection[str] = ('covale',),
     allowed_res_names: Collection[str] | None = None,
     allow_multiple_bonds_per_atom: bool,
+    include_intra_chain_polymer: bool = False,
 ) -> atom_layout.AtomLayout:
   """Get bond_layout for all bonds between two sets of chain types.
 
@@ -324,6 +325,10 @@ def get_bond_layout(
   combined_allowed_bonds = np.logical_or(
       is_inter_chain_not_ligand, is_inter_ligand_res
   )
+  if include_intra_chain_polymer:
+    combined_allowed_bonds = np.logical_or(
+        combined_allowed_bonds, np.logical_and(is_inter_res, ~is_ligand)
+    )
   np.logical_and(all_mask, combined_allowed_bonds, out=all_mask)
   bond_layout = atom_layout.AtomLayout(
       atom_name=np.stack(

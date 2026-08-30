@@ -29,6 +29,9 @@ from alphafold3 import structure
 from alphafold3.common import base_config
 from alphafold3.common import folding_input
 from alphafold3.constants import chemical_components
+from alphafold3.constants import mmcif_names
+from alphafold3.constants import residue_names
+from alphafold3.model.atom_layout import atom_layout
 from alphafold3.model import feat_batch
 from alphafold3.model import features
 from alphafold3.model.pipeline import inter_chain_bonds
@@ -38,6 +41,93 @@ import numpy as np
 
 
 _DETERMINISTIC_FRAMES_RANDOM_SEED = 12312837
+
+
+def _without_linear_polymer_backbone_bonds(
+    struct: structure.Structure,
+    bond_layout: atom_layout.AtomLayout,
+    *,
+    flatten_non_standard_residues: bool,
+    of3_weights: bool = False,
+) -> atom_layout.AtomLayout:
+  """Remove sequence-adjacent backbone links from explicit crosslink features.
+
+  Deposited structures can enumerate every peptide or phosphodiester bond.
+  Those links are already represented by sequence adjacency for single-token
+  residues and must not be fed through the ligand-bond channel. AF3 keeps
+  atomized modified-residue backbones explicit, while OF3 represents every
+  sequence-adjacent backbone link implicitly. Non-adjacent crosslinks remain
+  explicit for both weight families.
+  """
+  if not bond_layout.atom_name.size:
+    return bond_layout
+  if bond_layout.res_name is None:
+    raise ValueError('Polymer bond layout must carry residue names')
+
+  residue_positions = {
+      (chain_id, int(res_id)): position
+      for chain_id, res_ids in struct.chain_res_ids(
+          include_missing_residues=True
+      ).items()
+      for position, res_id in enumerate(res_ids)
+  }
+  keep = np.ones(bond_layout.atom_name.shape[0], dtype=bool)
+  peptide_types = set(mmcif_names.PEPTIDE_CHAIN_TYPES)
+  nucleic_types = {
+      *mmcif_names.NUCLEIC_ACID_CHAIN_TYPES,
+      mmcif_names.OTHER_CHAIN,
+  }
+  for index in range(bond_layout.atom_name.shape[0]):
+    chain_a, chain_b = bond_layout.chain_id[index]
+    if chain_a != chain_b:
+      continue
+    position_a = residue_positions.get(
+        (chain_a, int(bond_layout.res_id[index, 0]))
+    )
+    position_b = residue_positions.get(
+        (chain_b, int(bond_layout.res_id[index, 1]))
+    )
+    if position_a is None or position_b is None:
+      raise ValueError('Polymer bond endpoint is absent from residue numbering')
+    if abs(position_a - position_b) != 1:
+      continue
+
+    atom_a, atom_b = bond_layout.atom_name[index]
+    res_name_a, res_name_b = bond_layout.res_name[index]
+    chain_types = set(bond_layout.chain_type[index])
+    residue_by_atom = {atom_a: position_a, atom_b: position_b}
+    peptide_backbone_is_implicit = (
+        of3_weights
+        or not flatten_non_standard_residues
+        or all(
+            res_name in residue_names.PROTEIN_TYPES_WITH_UNKNOWN
+            or res_name == residue_names.MSE
+            for res_name in (res_name_a, res_name_b)
+        )
+    )
+    nucleic_backbone_is_implicit = (
+        of3_weights
+        or not flatten_non_standard_residues
+        or all(
+            res_name in residue_names.NUCLEIC_TYPES_WITH_2_UNKS
+            for res_name in (res_name_a, res_name_b)
+        )
+    )
+    is_linear_peptide = (
+        chain_types <= peptide_types
+        and {atom_a, atom_b} == {'C', 'N'}
+        and residue_by_atom['N'] == residue_by_atom['C'] + 1
+        and peptide_backbone_is_implicit
+    )
+    is_linear_nucleic = (
+        chain_types <= nucleic_types
+        and {atom_a, atom_b} == {"O3'", 'P'}
+        and residue_by_atom['P'] == residue_by_atom["O3'"] + 1
+        and nucleic_backbone_is_implicit
+    )
+    if is_linear_peptide or is_linear_nucleic:
+      keep[index] = False
+  return bond_layout[keep]
 
 
 def calculate_bucket_size(
@@ -157,6 +247,7 @@ class WholePdbPipeline:
     conformer_max_iterations: int | None = None
     resolve_msa_overlaps: bool = True
     fix_standalone_glycans: bool = False
+    of3_weights: bool = False
 
   def __init__(self, *, config: Config):
     """Initializes WholePdb data pipeline.
@@ -184,6 +275,28 @@ class WholePdbPipeline:
     logging_name = f'{struct.name}, random_seed={random_seed}'
     logging.info('Processing %s', logging_name)
 
+    # Capture explicit polymer crosslinks before coordinate-based cleaning.
+    # FoldInput bonds are user constraints and may intentionally begin open;
+    # unrelated malformed bonds should still receive the standard cleanup.
+    polymer_polymer_bonds = inter_chain_bonds.get_bond_layout(
+        bond_threshold=np.inf,
+        struct=struct,
+        allowed_chain_types1=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        allowed_chain_types2=list(mmcif_names.POLYMER_CHAIN_TYPES),
+        include_bond_types=(
+            mmcif_names.COVALENT_BOND,
+            mmcif_names.DISULFIDE_BRIDGE,
+        ),
+        allow_multiple_bonds_per_atom=True,
+        include_intra_chain_polymer=True,
+    )
+    polymer_polymer_bonds = _without_linear_polymer_backbone_bonds(
+        struct,
+        polymer_polymer_bonds,
+        flatten_non_standard_residues=self._config.flatten_non_standard_residues,
+        of3_weights=self._config.of3_weights,
+    )
+
     # Clean structure.
     cleaned_struc = structure_cleaning.clean_structure(
         struct,
@@ -195,7 +308,8 @@ class WholePdbPipeline:
         filter_leaving_atoms=self._config.drop_ligand_leaving_atoms,
         only_glycan_ligands_for_leaving_atoms=True,
         covalent_bonds_only=True,
-        remove_polymer_polymer_bonds=True,
+        # The feature layout was captured above; retain valid rows in output.
+        remove_polymer_polymer_bonds=False,
         remove_bad_bonds=True,
         fix_standalone_glycans=self._config.fix_standalone_glycans,
     )
@@ -398,6 +512,7 @@ class WholePdbPipeline:
         all_tokens,
         ligand_ligand_bonds,
         padding_shapes,
+        polymer_polymer_bonds=polymer_polymer_bonds,
     )
 
     # Create the Pseudo-beta layout for distogram head and distance error head.
