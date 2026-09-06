@@ -1413,7 +1413,13 @@ class Input:
               f'Chain {chain_id} has duplicate residue IDs {chain_res_ids};'
               ' residue numbering (e.g. from insertion codes) must be unique.'
           )
-        residue_numbering[chain_id] = chain_res_ids
+        # Keep only non-default numbering.  Recording the ordinary 1..N case
+        # would make an otherwise unchanged Input fail an mmCIF round trip
+        # (`None` before serialisation versus an explicit mapping afterwards).
+        # Gapped/cropped inputs still retain the information needed to restore
+        # their original residue indices.
+        if chain_res_ids != list(range(1, len(chain_res_ids) + 1)):
+          residue_numbering[chain_id] = chain_res_ids
 
         if chain_type == mmcif_names.PROTEIN_CHAIN:
           chains.append(

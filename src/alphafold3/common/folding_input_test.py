@@ -750,6 +750,29 @@ class InputTest(parameterized.TestCase):
     self.assertIsInstance(fold_input_from_mmcif.bonded_atom_pairs[0][0][1], int)
     self.assertEqual(fold_input_from_mmcif, fold_input)
 
+  def test_from_mmcif_round_trip_preserves_gapped_residue_numbering(self):
+    fold_input = folding_input.Input(
+        name='cropped_input',
+        chains=[
+            folding_input.ProteinChain(
+                id='A', sequence='ACDE', ptms=[]
+            ),
+        ],
+        rng_seeds=[_SAMPLE_RNG_SEED],
+        residue_numbering={'A': (10, 11, 20, 21)},
+    )
+
+    mmcif_str = fold_input.to_structure(
+        ccd=chemical_components.Ccd()
+    ).to_mmcif()
+
+    self.assertEqual(
+        folding_input.Input.from_mmcif(
+            mmcif_str, ccd=chemical_components.Ccd()
+        ),
+        fold_input,
+    )
+
   def test_to_structure(self):
     folding_input_with_ptms = folding_input.Input(
         name='test',
