@@ -20,7 +20,21 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD_VERBOSITY: 1
 
-      - name: Upload wheel to release
+      # Always keep the wheel as a build artifact, so a manual dispatch is a
+      # usable dry run of the release build rather than a job that only fails
+      # at the upload step.
+      - name: Upload wheel as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alphafold3-open-wheel-${{ github.sha }}
+          path: wheelhouse/alphafold3_open-*.whl
+          if-no-files-found: error
+
+      # Only a release event has a tag to attach to. On workflow_dispatch
+      # github.ref_name is the branch, and `gh release upload main` fails
+      # because no release by that name exists.
+      - name: Attach wheel to the release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload ${{ github.ref_name }} wheelhouse/alphafold3_open-*.whl --clobber
