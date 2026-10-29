@@ -1444,7 +1444,13 @@ class Input:
               f'Chain {chain_id} has duplicate residue IDs {chain_res_ids};'
               ' residue numbering (e.g. from insertion codes) must be unique.'
           )
-        residue_numbering[chain_id] = chain_res_ids
+        # Only record numbering that departs from the implicit default: a
+        # chain absent from the mapping already means contiguous 1..N (see
+        # the `residue_numbering` docstring). Recording the default
+        # explicitly made from_mmcif(x.to_structure()) != x for every Input
+        # built without residue_numbering, since __eq__ compares the field.
+        if chain_res_ids != list(range(1, len(chain_res_ids) + 1)):
+          residue_numbering[chain_id] = chain_res_ids
 
         if chain_type == mmcif_names.PROTEIN_CHAIN:
           chains.append(
