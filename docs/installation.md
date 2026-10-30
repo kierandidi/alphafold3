@@ -212,13 +212,16 @@ uv pip install --python .venv-af3 \
 ### `build_data` is required
 
 The wheel ships the CCD *generators*, not the CCD data itself:
-`alphafold3/constants/converters/` contains only `ccd_pickle_gen.py` and
-`chemical_component_sets_gen.py`. Until the pickles are generated, importing
-most of the model package fails with:
+`alphafold3/constants/converters/` contains only `ccd_msgpack_gen.py` and
+`chemical_component_sets_gen.py`. Until the data is generated, importing most
+of the model package fails with:
 
 ```
-FileNotFoundError: .../alphafold3/constants/converters/chemical_component_sets.pickle
+FileNotFoundError: .../alphafold3/constants/converters/chemical_component_sets.msgpack
 ```
+
+(Before v3.0.5 these files were pickles; v3.0.5 moved the CCD to MessagePack,
+which is also why `build_data` got faster.)
 
 This affects `alphafold3.model.features`, `alphafold3.model.model`,
 `alphafold3.model.post_processing` and `alphafold3.model.components.utils` —
@@ -229,10 +232,10 @@ installing, always run:
 .venv-af3/bin/build_data
 ```
 
-It takes about 30 seconds and writes `ccd.pickle`,
-`chemical_component_sets.pickle` and `ccd_codes.txt` (51,537 CCD codes) into
-the installed package. Every import then succeeds, including the fork-only
-`global_config.of3_weights` flag.
+It takes about 30 seconds (27 s measured on an H200 node at v3.0.5) and
+writes `ccd.msgpack`, `chemical_component_sets.msgpack` and `ccd_codes.txt`
+(51,537 CCD codes) into the installed package. Every import then succeeds,
+including the fork-only `global_config.of3_weights` flag.
 
 ### Note on `of3_weights`
 
