@@ -17,6 +17,7 @@
 // if received directly from Google. Use is subject to terms of use available at
 // https://github.com/google-deepmind/alphafold3/blob/main/WEIGHTS_TERMS_OF_USE.md
 
+#include "alphafold3/data/cpp/msa_features_pybind.h"
 #include "alphafold3/data/cpp/msa_profile_pybind.h"
 #include "alphafold3/model/json_serialize_pybind.h"
 #include "alphafold3/model/mkdssp_pybind.h"
@@ -24,6 +25,7 @@
 #include "alphafold3/parsers/cpp/fasta_iterator_pybind.h"
 #include "alphafold3/parsers/cpp/msa_conversion_pybind.h"
 #include "alphafold3/structure/cpp/aggregation_pybind.h"
+#include "alphafold3/structure/cpp/indexing_pybind.h"
 #include "alphafold3/structure/cpp/membership_pybind.h"
 #include "alphafold3/structure/cpp/mmcif_atom_site_pybind.h"
 #include "alphafold3/structure/cpp/mmcif_layout_pybind.h"
@@ -42,6 +44,7 @@ PYBIND11_MODULE(cpp, m) {
   RegisterModuleMsaConversion(m.def_submodule("msa_conversion"));
   RegisterModuleMmcifLayout(m.def_submodule("mmcif_layout"));
   RegisterModuleMmcifStructConn(m.def_submodule("mmcif_struct_conn"));
+  RegisterModuleIndexing(m.def_submodule("indexing"));
   RegisterModuleMembership(m.def_submodule("membership"));
   RegisterModuleMmcifUtils(m.def_submodule("mmcif_utils"));
   RegisterModuleAggregation(m.def_submodule("aggregation"));
@@ -49,6 +52,7 @@ PYBIND11_MODULE(cpp, m) {
   RegisterModuleMmcifAtomSite(m.def_submodule("mmcif_atom_site"));
   RegisterModuleJsonSerialize(m.def_submodule("json_serialize"));
   RegisterModuleMkdssp(m.def_submodule("mkdssp"));
+  RegisterModuleMsaFeatures(m.def_submodule("msa_features"));
   RegisterModuleMsaProfile(m.def_submodule("msa_profile"));
 }
 

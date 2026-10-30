@@ -505,7 +505,7 @@ class Model(hk.Module):
               'full_pae': result['full_pae'][idx, :num_tokens, :num_tokens],
               'contact_probs': contact_probs[:num_tokens, :num_tokens],
           },
-          metadata={  # pyrefly: ignore[bad-argument-type]
+          metadata={
               'predicted_distance_error': predicted_distance_errors[idx],
               'ranking_score': ranking_score,
               'fraction_disordered': fraction_disordered[idx],
@@ -523,11 +523,11 @@ class Model(hk.Module):
               'pae_ichain': pae_metrics['pae_ichain'][idx],
               'pae_xchain': pae_metrics['pae_xchain'][idx],
               'ranking_confidence': ranking_confidence[idx],
-              'ranking_confidence_pae': ranking_confidence_pae[idx],
+              'ranking_confidence_pae': ranking_confidence_pae[idx],  # pyrefly: ignore[bad-assignment]
               'chain_pair_iptm': chain_pair_iptm[idx],
               'iptm_ichain': iptm_ichain[idx],
               'iptm_xchain': iptm_xchain[idx],
-              'token_chain_ids': chain_ids,
+              'token_chain_ids': chain_ids,  # pyrefly: ignore[bad-assignment]
               'token_res_ids': res_ids,
           },
           model_id=result['__identifier__'],

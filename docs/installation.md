@@ -29,6 +29,11 @@ The instructions provided below describe how to:
 1.  Obtain model parameters.
 1.  Build the AlphaFold 3 Docker container or Singularity image.
 
+Note that while the instructions below show manual virtual machine creation, you
+can alternatively also use
+[AlphaFold 3 on Gemini Enterprise Agent Platform](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/open-models/alphafold-3)
+which makes the deployment easier. This workflow also supports commercial use.
+
 ## Provisioning a Machine
 
 Clean Ubuntu images are available on Google Cloud, AWS, Azure, and other major
@@ -267,6 +272,21 @@ You can use theses two scripts:
 You can download the AlphaFold 3 model parameters from
 https://storage.googleapis.com/alphafold3/af3.bin.zst. Use is subject to these
 [terms of use](https://github.com/google-deepmind/alphafold3/blob/main/WEIGHTS_TERMS_OF_USE.md).
+
+The model parameters for AlphaFold 3 Leaving Atom (AF3-LA) can be used as an
+alternative model fine-tuned for leaving atom handling. The weights are
+available at https://storage.googleapis.com/alphafold3/af3_leaving_atom.bin.zst
+and are subject to the same terms of use as the original AlphaFold 3 model
+parameters. See
+[google-deepmind/alphaprotein-novo](https://github.com/google-deepmind/alphaprotein-novo)
+for more details.
+
+In addition to the original AlphaFold 3 model parameters, the SynthID
+Bio-structure version of AlphaFold 3, corresponding to a fine-tuned version
+producing watermarked structures, is available at
+https://storage.googleapis.com/alphafold3/af3_synthid.bin.zst. Please refer to
+[google-deepmind/synthidbio](https://github.com/google-deepmind/synthidbio) for
+more details.
 
 Download the model parameters to a directory of your choosing, referred to as
 `<MODEL_PARAMETERS_DIR>` in the following instructions. As with the databases,

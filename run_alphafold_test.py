@@ -164,7 +164,7 @@ class InferenceTest(parameterized.TestCase):
 
   def test_model_inference(self):
     """Run model inference and assert that output exists."""
-    featurised_examples = pickle.loads(
+    featurised_examples = pickle.loads(  # pylint: disable=g-unsafe-pickle-load
         (resources.ROOT / 'test_data' / 'featurised_example.pkl').read_bytes()
     )
 
@@ -380,7 +380,7 @@ class InferenceTest(parameterized.TestCase):
     logging.info('Comparing inference results with expected values.')
 
     ### Assert that output is as expected.
-    expected_dict = pickle.loads(
+    expected_dict = pickle.loads(  # pylint: disable=g-unsafe-pickle-load
         (
             resources.ROOT
             / 'test_data'

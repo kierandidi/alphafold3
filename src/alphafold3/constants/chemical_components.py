@@ -25,22 +25,21 @@ import functools
 import os
 
 from alphafold3.common import resources
-from alphafold3.common import safe_pickle
 from alphafold3.cpp import cif_dict
+import msgpack
 
-
-_CCD_PICKLE_FILE = resources.filename(
-    resources.ROOT / 'constants/converters/ccd.pickle'
+_CCD_MSGPACK_FILE = resources.filename(
+    resources.ROOT / 'constants/converters/ccd.msgpack'
 )
 
 
 @functools.cache
-def _load_ccd_pickle_cached(
+def _load_ccd_msgpack_cached(
     path: os.PathLike[str],
 ) -> dict[str, Mapping[str, Sequence[str]]]:
-  """Loads the CCD pickle file and caches it so that it is only loaded once."""
+  """Loads the CCD MessagePack file and caches it so it is only loaded once."""
   with open(path, 'rb') as f:
-    return safe_pickle.load(f)
+    return msgpack.unpack(f)
 
 
 class Ccd(Mapping[str, Mapping[str, Sequence[str]]]):
@@ -52,25 +51,25 @@ class Ccd(Mapping[str, Mapping[str, Sequence[str]]]):
   Wraps the dict to prevent accidental mutation.
   """
 
-  __slots__ = ('_dict', '_ccd_pickle_path')
+  __slots__ = ('_dict', '_ccd_msgpack_path')
 
   def __init__(
       self,
-      ccd_pickle_path: os.PathLike[str] | None = None,
+      ccd_msgpack_path: os.PathLike[str] | None = None,
       user_ccd: str | None = None,
   ):
     """Initialises the chemical components dictionary.
 
     Args:
-      ccd_pickle_path: Path to the CCD pickle file. If None, uses the default
-        CCD pickle file included in the source code.
+      ccd_msgpack_path: Path to the CCD MessagePack file. If None, uses the
+        default CCD MessagePack file included in the source code.
       user_ccd: A string containing the user-provided CCD. This has to conform
         to the same format as the CCD, see https://www.wwpdb.org/data/ccd. If
         provided, takes precedence over the CCD for the the same key. This can
         be used to override specific entries in the CCD if desired.
     """
-    self._ccd_pickle_path = ccd_pickle_path or _CCD_PICKLE_FILE
-    self._dict = _load_ccd_pickle_cached(self._ccd_pickle_path)
+    self._ccd_msgpack_path = ccd_msgpack_path or _CCD_MSGPACK_FILE
+    base_ccd = _load_ccd_msgpack_cached(self._ccd_msgpack_path)
 
     if user_ccd is not None:
       if not user_ccd:
@@ -79,7 +78,11 @@ class Ccd(Mapping[str, Mapping[str, Sequence[str]]]):
           key: value.to_dict()
           for key, value in cif_dict.parse_multi_data_cif(user_ccd).items()
       }
-      self._dict.update(user_ccd_cifs)
+      # Create a copy of the base CCD with the user modifications so the
+      # base CCD is not mutated across different instances of the class.
+      self._dict = {**base_ccd, **user_ccd_cifs}
+    else:
+      self._dict = base_ccd
 
   def __getitem__(self, key: object) -> Mapping[str, Sequence[str]]:
     if not isinstance(key, str):
