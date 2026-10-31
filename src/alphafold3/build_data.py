@@ -33,8 +33,11 @@ import urllib.request
 import msgpack
 
 import alphafold3.constants.converters
-from alphafold3.constants.converters import ccd_msgpack_gen
-from alphafold3.constants.converters import chemical_component_sets_gen
+
+# `ccd_msgpack_gen` imports `alphafold3.cpp`, and importing that extension
+# fails outright when components.cif is absent -- it looks the file up during
+# module registration. Since fetching that file is this script's job, the
+# import has to happen after the fetch, not at module scope.
 
 
 # The wheel no longer bundles the ~497 MB Chemical Component Dictionary. It was
@@ -127,6 +130,9 @@ def build_data():
       print(f'Using the CCD already present at {cif_path}', flush=True)
     else:
       ccd_sha256 = _download_ccd(cif_path, url, expected)
+
+  from alphafold3.constants.converters import ccd_msgpack_gen  # pylint: disable=g-import-not-at-top
+  from alphafold3.constants.converters import chemical_component_sets_gen  # pylint: disable=g-import-not-at-top
 
   out_root = resources.files(alphafold3.constants.converters)
   ccd_msgpack_path = out_root.joinpath('ccd.msgpack')

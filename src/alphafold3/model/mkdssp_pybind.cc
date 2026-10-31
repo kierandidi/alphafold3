@@ -50,8 +50,13 @@ void RegisterModuleMkdssp(pybind11::module m) {
       }
     }
     if (!found) {
+      // The wheel no longer bundles components.cif; `build_data` downloads it.
+      // Say so, because otherwise this reads as a broken install rather than a
+      // step the user has not run yet.
       throw py::type_error(
-        "Could not find the libcifpp components.cif file.");
+        "Could not find the libcifpp components.cif file. Run `build_data` "
+        "once per environment to download it, or set LIBCIFPP_DATA_DIR to a "
+        "directory that already holds one.");
     }
   }
   m.def(
