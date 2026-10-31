@@ -16,17 +16,27 @@ readme = "README.md"
 license = {file = "LICENSE"}
 dependencies = [
     "absl-py>=2.3.1",
-    "dm-haiku==0.0.17",
-    "etils[epath]",
-    "jax==0.10.2",
+    "dm-haiku>=0.0.17,<0.1",
+    "etils[epath]>=1.13",
+    # jax, jaxlib and tokamax stay pinned exactly, and deliberately so. jaxlib
+    # ships the compiled kernels the model's numerics were validated against,
+    # and tokamax reaches into jaxlib's MLIR Python bindings, which are not a
+    # stable API -- a mismatched pair imports cleanly and then fails at
+    # autotune time. These are the one place where an exact pin is load-bearing
+    # rather than merely cautious.
     "jax[cuda12]==0.10.2; sys_platform != 'darwin'",
+    "jax==0.10.2; sys_platform == 'darwin'",
     "jax-mps==0.10.9; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "msgpack",
-    "numpy",
-    "rdkit==2026.3.3",
+    "msgpack>=1.1",
+    # Bounded because it was not bounded at all, and that was not theoretical:
+    # a fresh install resolves numpy 2.5.x while uv.lock and the published
+    # container both carry 2.4.1. Installing from this metadata alone is meant
+    # to give a working environment; `uv.lock` is what reproduces an exact one.
+    "numpy>=2.4,<3",
+    "rdkit>=2026.3.3,<2027",
     "tokamax==0.0.12",
-    "tqdm",
-    "zstandard",
+    "tqdm>=4.67",
+    "zstandard>=0.23",
 ]
 
 [project.optional-dependencies]
