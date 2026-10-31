@@ -104,6 +104,89 @@ class InputTest(parameterized.TestCase):
         folding_input.Template(mmcif='irrelevant', query_to_template_map={}),
     )
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name='negative_query_index_first_pos',
+          query_to_template_map={-1: 0, 1: 1},
+          expected_error='Query residue index -1 at position 1',
+      ),
+      dict(
+          testcase_name='negative_query_index_second_pos',
+          query_to_template_map={0: 0, -5: 1},
+          expected_error='Query residue index -5 at position 2',
+      ),
+      dict(
+          testcase_name='negative_template_index_first_pos',
+          query_to_template_map={0: -1, 1: 1},
+          expected_error='Template residue index -1 at position 1',
+      ),
+      dict(
+          testcase_name='negative_template_index_second_pos',
+          query_to_template_map={0: 0, 1: -3},
+          expected_error='Template residue index -3 at position 2',
+      ),
+  )
+  def test_template_negative_index_error(
+      self, query_to_template_map, expected_error
+  ):
+    with self.assertRaisesRegex(ValueError, expected_error):
+      folding_input.Template(
+          mmcif='tst', query_to_template_map=query_to_template_map
+      )
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name='first_template_first_pos',
+          templates=[
+              folding_input.Template(mmcif='tst', query_to_template_map={5: 0})
+          ],
+          expected_error=(
+              'Query residue index 5 at position 1 .+ length 4 for template 1'
+          ),
+      ),
+      dict(
+          testcase_name='first_template_second_pos',
+          templates=[
+              folding_input.Template(
+                  mmcif='tst', query_to_template_map={0: 0, 6: 1}
+              )
+          ],
+          expected_error=(
+              'Query residue index 6 at position 2 .+ length 4 for template 1'
+          ),
+      ),
+      dict(
+          testcase_name='second_template_second_pos',
+          templates=[
+              folding_input.Template(
+                  mmcif='tst', query_to_template_map={0: 0, 3: 1}
+              ),
+              folding_input.Template(
+                  mmcif='tst', query_to_template_map={1: 0, 10: 2}
+              ),
+          ],
+          expected_error=(
+              'Query residue index 10 at position 2 .+ length 4 for template 2'
+          ),
+      ),
+      dict(
+          testcase_name='query_index_equal_to_length',
+          templates=[
+              folding_input.Template(mmcif='tst', query_to_template_map={4: 0})
+          ],
+          expected_error=(
+              'Query residue index 4 at position 1 .+ length 4 for template 1'
+          ),
+      ),
+  )
+  def test_protein_chain_template_query_index_too_large_error(
+      self, templates, expected_error
+  ):
+    with self.assertRaisesRegex(ValueError, expected_error):
+      folding_input.ProteinChain(
+          id='A', sequence='ABCD', ptms=[], templates=templates
+      )
+
   def test_protein_to_ccd_sequence(self):
     protein_chain = folding_input.ProteinChain(
         id='A', sequence='ABCDEFGHIJ', ptms=[('HY3', 1), ('P1L', 5)]
@@ -130,6 +213,20 @@ class InputTest(parameterized.TestCase):
         dna_chain.to_ccd_sequence(),
         ['6OG', '6MA', 'DC', 'DT', 'DN'],
     )
+
+  def test_sequence_not_upper_case_error(self):
+    with self.subTest('protein_lowercase'):
+      with self.assertRaisesRegex(ValueError, 'upper case letters'):
+        folding_input.ProteinChain(id='A', sequence='DeepMind', ptms=[])
+    with self.subTest('protein_non_ascii'):
+      with self.assertRaisesRegex(ValueError, 'upper case letters'):
+        folding_input.ProteinChain(id='A', sequence='ŘEŘICHA', ptms=[])
+    with self.subTest('rna_lowercase'):
+      with self.assertRaisesRegex(ValueError, 'upper case letters'):
+        folding_input.RnaChain(id='A', sequence='acgu', modifications=[])
+    with self.subTest('dna_lowercase'):
+      with self.assertRaisesRegex(ValueError, 'upper case letters'):
+        folding_input.DnaChain(id='A', sequence='acgt', modifications=[])
 
   def test_protein_to_single_letter_sequence(self):
     protein_chain = folding_input.ProteinChain(
@@ -671,6 +768,31 @@ class InputTest(parameterized.TestCase):
     )
     self.assertEqual(af_input, round_trip_input)
 
+  def test_to_json_keeps_chain_order_of_interleaved_duplicates(self):
+    # Two identical chains separated by a different chain: to_json must not
+    # move the chain in between, as the chain order fixes the token order and
+    # the asym_id/entity_id/sym_id assignment in to_structure().
+    af_input = {
+        'name': 'test_input',
+        'modelSeeds': [1337],
+        'sequences': [
+            {'protein': {'id': 'A', 'sequence': 'RRR'}},
+            {'ligand': {'id': 'B', 'ccdCodes': ['GLY']}},
+            {'protein': {'id': 'C', 'sequence': 'RRR'}},
+        ],
+        'bondedAtomPairs': None,
+        'userCCD': None,
+        'dialect': 'alphafold3',
+        'version': folding_input.JSON_VERSION,
+    }
+    fold_input = folding_input.Input.from_json(json.dumps(af_input))
+    round_trip = folding_input.Input.from_json(fold_input.to_json())
+    self.assertEqual(
+        [chain.id for chain in round_trip.chains],
+        [chain.id for chain in fold_input.chains],
+    )
+    self.assertEqual(round_trip, fold_input)
+
   def test_from_json_some_chain_ids_given(self):
     test_json = data.Data(resources.ROOT / 'common/test_data/').load(
         'alphafold_input.json'
@@ -691,6 +813,45 @@ class InputTest(parameterized.TestCase):
     rna_input = {'rna': {'sequence': 'GG', 'pairedMsa': '>seq 1\nGG'}}
     with self.assertRaises(ValueError):
       folding_input.RnaChain.from_dict(rna_input)
+
+  @parameterized.parameters(
+      ('100d', 0, 0, 0, 1, 0),  # 100d has only RNA/DNA hybrid chains + ligand.
+      ('2pv7', 2, 0, 0, 4, 27),
+      (
+          '2ppb_trimmed',
+          5,
+          1,
+          2,
+          6,
+          78,
+      ),  # 2x chains, but defined using bioassembly.
+  )
+  def test_from_mmcif(
+      self,
+      pdb_id,
+      exp_num_protein_chains,
+      exp_num_rna_chains,
+      exp_num_dna_chains,
+      exp_num_ligands,
+      exp_num_bonds,
+  ):
+    mmcif = data.Data(
+        resources.ROOT / 'test_data/miniature_databases/pdb_mmcif'
+    ).load(f'{pdb_id}.cif')
+    fold_input = folding_input.Input.from_mmcif(
+        mmcif, ccd=chemical_components.Ccd()
+    )
+    self.assertEqual(fold_input.name, pdb_id.upper())
+    with self.subTest('protein_chains'):
+      self.assertLen(fold_input.protein_chains, exp_num_protein_chains)
+    with self.subTest('rna_chains'):
+      self.assertLen(fold_input.rna_chains, exp_num_rna_chains)
+    with self.subTest('dna_chains'):
+      self.assertLen(fold_input.dna_chains, exp_num_dna_chains)
+    with self.subTest('ligands'):
+      self.assertLen(fold_input.ligands, exp_num_ligands)
+    with self.subTest('bonds'):
+      self.assertLen(fold_input.bonded_atom_pairs or [], exp_num_bonds)
 
   def test_from_mmcif_round_trip(self):
     fold_input = folding_input.Input(

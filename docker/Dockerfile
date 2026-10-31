@@ -17,7 +17,7 @@
 # if received directly from Google. Use is subject to terms of use available at
 # https://github.com/google-deepmind/alphafold3/blob/main/WEIGHTS_TERMS_OF_USE.md
 
-FROM nvidia/cuda:12.6.3-base-ubuntu24.04
+FROM nvidia/cuda:12.9.2-base-ubuntu24.04
 
 LABEL org.opencontainers.image.source="https://github.com/kierandidi/alphafold3" \
       org.opencontainers.image.revision="f901bbe7772c55363ffd3a0d1071f89a7c1bdc75" \
@@ -35,7 +35,7 @@ apt-get update --quiet \
 
 # Install uv from the official repository. The version is pinned for
 # reproducibility.
-COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 
 # UV_COMPILE_BYTECODE=1 speeds up future container starts.
 # UV_PROJECT_ENVIRONMENT explicitly sets the virtual environment location.
@@ -59,9 +59,11 @@ RUN mkdir /hmmer_build /hmmer ; \
     (cd /hmmer_build && echo "ca70d94fd0cf271bd7063423aabb116d42de533117343a9b27a65c17ff06fbf3 hmmer-3.4.tar.gz" | sha256sum --check) && \
     (cd /hmmer_build && tar zxf hmmer-3.4.tar.gz && rm hmmer-3.4.tar.gz)
 
-# Apply the --seq_limit patch to HMMER.
-COPY docker/jackhmmer_seq_limit.patch /hmmer_build/
-RUN (cd /hmmer_build && patch -p0 < jackhmmer_seq_limit.patch)
+# Apply speedup patches to EASEL and HMMER.
+COPY docker/*.patch /hmmer_build/
+RUN (cd /hmmer_build && patch -p0 < jackhmmer_seq_limit.patch) && \
+    (cd /hmmer_build && patch -p0 < easel_fast_fasta_parsing.patch) && \
+    (cd /hmmer_build && patch -p0 < jackhmmer_parallel_fasta.patch)
 
 # Build HMMER.
 RUN (cd /hmmer_build/hmmer-3.4 && ./configure --prefix /hmmer) && \

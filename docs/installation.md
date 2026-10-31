@@ -29,6 +29,11 @@ The instructions provided below describe how to:
 1.  Obtain model parameters.
 1.  Build the AlphaFold 3 Docker container or Singularity image.
 
+Note that while the instructions below show manual virtual machine creation, you
+can alternatively also use
+[AlphaFold 3 on Gemini Enterprise Agent Platform](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/open-models/alphafold-3)
+which makes the deployment easier. This workflow also supports commercial use.
+
 ## Provisioning a Machine
 
 Clean Ubuntu images are available on Google Cloud, AWS, Azure, and other major
@@ -185,8 +190,67 @@ Mon Nov  11 12:00:00 2024
 Install `git` and download the AlphaFold 3 repository:
 
 ```sh
-git clone https://github.com/google-deepmind/alphafold3.git
+git clone https://github.com/kierandidi/alphafold3.git
 ```
+
+## Installing from a Release Wheel
+
+If you only need to *run* this fork — for example as the refolding oracle for
+another project — you can install it from a release wheel instead of building
+the Docker or Singularity image. The wheel carries the compiled extensions, so
+no C++ toolchain is needed at install time.
+
+The wheels are `cp312` / `manylinux_2_28` / `x86_64`, matching the
+`requires-python = ">=3.12"` in `pyproject.toml`.
+
+```sh
+uv venv .venv-af3 --python 3.12
+uv pip install --python .venv-af3 \
+  'alphafold3-open @ https://github.com/kierandidi/alphafold3/releases/download/vX.Y.Z/alphafold3_open-X.Y.Z-cp312-cp312-manylinux_2_28_x86_64.whl'
+```
+
+### `build_data` is required
+
+The wheel ships the CCD *generators*, not the CCD data itself:
+`alphafold3/constants/converters/` contains only `ccd_msgpack_gen.py` and
+`chemical_component_sets_gen.py`. Until the data is generated, importing most
+of the model package fails with:
+
+```
+FileNotFoundError: .../alphafold3/constants/converters/chemical_component_sets.msgpack
+```
+
+(Before v3.0.5 these files were pickles; v3.0.5 moved the CCD to MessagePack,
+which is also why `build_data` got faster.)
+
+This affects `alphafold3.model.features`, `alphafold3.model.model`,
+`alphafold3.model.post_processing` and `alphafold3.model.components.utils` —
+i.e. nearly everything beyond `alphafold3.cpp` and `folding_input`. So after
+installing, always run:
+
+```sh
+.venv-af3/bin/build_data
+```
+
+It takes about 30 seconds (27 s measured on an H200 node at v3.0.5) and
+writes `ccd.msgpack`, `chemical_component_sets.msgpack` and `ccd_codes.txt`
+(51,537 CCD codes) into the installed package. Every import then succeeds,
+including the fork-only `global_config.of3_weights` flag.
+
+### Note on `of3_weights`
+
+The OpenFold3 code paths this fork adds are selected by
+`global_config.of3_weights`, which does not exist upstream. Installing
+`alphafold3` from google-deepmind instead of this fork will raise
+`AttributeError` when that flag is set, so consumers that need OpenFold3
+weights must install *this* package.
+
+### GPU support
+
+The wheel declares `jax[cuda12]==0.10.2`, so it brings its own CUDA userspace
+via pip wheels rather than relying on a container image. This means the host
+NVIDIA driver must be new enough for CUDA 12; on hosts with older drivers the
+containerised route remains the more reliable option.
 
 ## Obtaining Genetic Databases
 
@@ -267,6 +331,21 @@ You can use theses two scripts:
 You can download the AlphaFold 3 model parameters from
 https://storage.googleapis.com/alphafold3/af3.bin.zst. Use is subject to these
 [terms of use](https://github.com/google-deepmind/alphafold3/blob/main/WEIGHTS_TERMS_OF_USE.md).
+
+The model parameters for AlphaFold 3 Leaving Atom (AF3-LA) can be used as an
+alternative model fine-tuned for leaving atom handling. The weights are
+available at https://storage.googleapis.com/alphafold3/af3_leaving_atom.bin.zst
+and are subject to the same terms of use as the original AlphaFold 3 model
+parameters. See
+[google-deepmind/alphaprotein-novo](https://github.com/google-deepmind/alphaprotein-novo)
+for more details.
+
+In addition to the original AlphaFold 3 model parameters, the SynthID
+Bio-structure version of AlphaFold 3, corresponding to a fine-tuned version
+producing watermarked structures, is available at
+https://storage.googleapis.com/alphafold3/af3_synthid.bin.zst. Please refer to
+[google-deepmind/synthidbio](https://github.com/google-deepmind/synthidbio) for
+more details.
 
 Download the model parameters to a directory of your choosing, referred to as
 `<MODEL_PARAMETERS_DIR>` in the following instructions. As with the databases,
@@ -501,7 +580,7 @@ resort to running AlphaFold 3 in the slow CPU-only mode even though it has a GPU
 4.  Clone the AlphaFold 3 GitHub repository
 
     ```sh
-    git clone https://github.com/google-deepmind/alphafold3.git
+    git clone https://github.com/kierandidi/alphafold3.git
     ```
 
 5.  Navigate in the `alphafold3` directory and run the following commands to

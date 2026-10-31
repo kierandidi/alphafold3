@@ -22,6 +22,7 @@
 from collections.abc import Collection, Iterator, Mapping, Sequence
 import dataclasses
 import gzip
+import itertools
 import json
 import logging
 import lzma
@@ -115,6 +116,18 @@ class Template:
     self._mmcif = mmcif
     # Needed to make the Template class hashable.
     self._query_to_template = tuple(query_to_template_map.items())
+
+    for pos, (query_index, hit_index) in enumerate(
+        query_to_template_map.items(), start=1
+    ):
+      if query_index < 0:
+        raise ValueError(
+            f'Query residue index {query_index} at position {pos} is negative.'
+        )
+      if hit_index < 0:
+        raise ValueError(
+            f'Template residue index {hit_index} at position {pos} is negative.'
+        )
 
   @property
   def query_to_template_map(self) -> Mapping[int, int]:
@@ -226,14 +239,28 @@ class ProteinChain:
         field is unset and must be filled in by the data pipeline before
         featurisation. The list can be empty or contain up to 20 templates.
     """
-    if not all(res.isalpha() for res in sequence):
-      raise ValueError(f'Protein must contain only letters, got "{sequence}"')
+    if not re.fullmatch(r'[A-Z]*', sequence):
+      raise ValueError(
+          f'Protein must contain only upper case letters, got "{sequence}"'
+      )
     if any(not 0 < mod[1] <= len(sequence) for mod in ptms):
       raise ValueError(f'Invalid protein modification index: {ptms}')
     if any(mod[0].startswith('CCD_') for mod in ptms):
       raise ValueError(
           f'Protein ptms must not contain the "CCD_" prefix, got {ptms}'
       )
+
+    for template_pos, template in enumerate(templates or [], start=1):
+      for pos, query_index in enumerate(
+          template.query_to_template_map.keys(), start=1
+      ):
+        if query_index >= len(sequence):
+          raise ValueError(
+              f'Query residue index {query_index} at position {pos} is out of'
+              f' range for the query sequence of length {len(sequence)} for'
+              f' template {template_pos}.'
+          )
+
     # Use hashable containers for ptms and templates.
     self._id = id
     self._sequence = sequence
@@ -512,8 +539,10 @@ class RnaChain:
         featurisation. If set to an empty string, it will be treated as a custom
         MSA with no sequences.
     """
-    if not all(res.isalpha() for res in sequence):
-      raise ValueError(f'RNA must contain only letters, got "{sequence}"')
+    if not re.fullmatch(r'[A-Z]*', sequence):
+      raise ValueError(
+          f'RNA must contain only upper case letters, got "{sequence}"'
+      )
     if any(not 0 < mod[1] <= len(sequence) for mod in modifications):
       raise ValueError(f'Invalid RNA modification index: {modifications}')
     if any(mod[0].startswith('CCD_') for mod in modifications):
@@ -709,8 +738,10 @@ class DnaChain:
         (1-based) residue index where the modification is applied.
       description: An optional textual description of the DNA chain.
     """
-    if not all(res.isalpha() for res in sequence):
-      raise ValueError(f'DNA must contain only letters, got "{sequence}"')
+    if not re.fullmatch(r'[A-Z]*', sequence):
+      raise ValueError(
+          f'DNA must contain only upper case letters, got "{sequence}"'
+      )
     if any(not 0 < mod[1] <= len(sequence) for mod in modifications):
       raise ValueError(f'Invalid DNA modification index: {modifications}')
     if any(mod[0].startswith('CCD_') for mod in modifications):
@@ -1030,7 +1061,7 @@ class Input:
       )
 
     chain_ids = [c.id for c in self.chains]
-    if any(not c.id.isalpha() or c.id.islower() for c in self.chains):
+    if any(not re.fullmatch(r'[A-Z]+', c.id) for c in self.chains):
       raise ValueError(f'IDs must be upper case letters, got: {chain_ids}')
     if len(set(chain_ids)) != len(chain_ids):
       raise ValueError('Input JSON contains sequences with duplicate IDs.')
@@ -1413,7 +1444,13 @@ class Input:
               f'Chain {chain_id} has duplicate residue IDs {chain_res_ids};'
               ' residue numbering (e.g. from insertion codes) must be unique.'
           )
-        residue_numbering[chain_id] = chain_res_ids
+        # Only record numbering that departs from the implicit default: a
+        # chain absent from the mapping already means contiguous 1..N (see
+        # the `residue_numbering` docstring). Recording the default
+        # explicitly made from_mmcif(x.to_structure()) != x for every Input
+        # built without residue_numbering, since __eq__ compares the field.
+        if chain_res_ids != list(range(1, len(chain_res_ids) + 1)):
+          residue_numbering[chain_id] = chain_res_ids
 
         if chain_type == mmcif_names.PROTEIN_CHAIN:
           chains.append(
@@ -1545,16 +1582,15 @@ class Input:
 
   def to_json(self) -> str:
     """Converts Input to an AlphaFold JSON."""
-    deduped_chains = {}
-    deduped_chain_ids = {}
-    for chain in self.chains:
-      deduped_chains[chain.hash_without_id()] = chain
-      deduped_chain_ids.setdefault(chain.hash_without_id(), []).append(chain.id)
-
+    # Group only consecutive identical chains to preserve chain order on a JSON
+    # round-trip (chain order determines token order and mmCIF ID assignment).
     sequences = []
-    for chain_content_hash, ids in deduped_chain_ids.items():
-      chain = deduped_chains[chain_content_hash]
-      sequences.append(chain.to_dict(seq_id=ids if len(ids) > 1 else ids[0]))
+    for _, group in itertools.groupby(
+        self.chains, key=lambda c: c.hash_without_id()
+    ):
+      chains = list(group)
+      seq_id = [c.id for c in chains] if len(chains) > 1 else chains[0].id
+      sequences.append(chains[0].to_dict(seq_id=seq_id))
 
     alphafold_json = json.dumps(
         {

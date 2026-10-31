@@ -350,7 +350,9 @@ _FIX_STANDALONE_GLYCANS = flags.DEFINE_bool(
     'AlphaFold 3 model training and evaluation filtered out leaving atoms from'
     ' glycan ligands even if they were not bonded to anything ("standalone"'
     ' glycans). Setting this flag to True fixes this undesirable behavior, but'
-    ' moves away from the regime where AlphaFold 3 was trained and evaluated.',
+    ' moves away from the regime where AlphaFold 3 was trained and evaluated.'
+    ' It is recommended to set this flag to True when using the AF3-LA'
+    ' parameters.',
 )
 
 # JAX inference performance tuning.
@@ -1103,7 +1105,7 @@ def main(_):
     os.makedirs(_jax_cache, exist_ok=True)
     jax.config.update('jax_compilation_cache_dir', _jax_cache)
 
-  if _JSON_PATH.value is None == _INPUT_DIR.value is None:
+  if (_JSON_PATH.value is None) == (_INPUT_DIR.value is None):
     raise ValueError(
         'Exactly one of --json_path or --input_dir must be specified.'
     )
@@ -1160,9 +1162,14 @@ def main(_):
     elif jax_backend == JaxBackend.GPU:
       gpu_devices = jax.local_devices(backend='gpu')
       if gpu_devices:
-        compute_capability = float(
-            gpu_devices[_GPU_DEVICE.value].compute_capability
-        )
+        compute_capability = gpu_devices[_GPU_DEVICE.value].compute_capability
+        if compute_capability.startswith('gfx'):
+          raise NotImplementedError(
+              f'Detected AMD GPU {gpu_devices[_GPU_DEVICE.value].device_kind} '
+              ' which is not currently supported.'
+          )
+        # We now assume we have an NVIDIA GPU with a numeric compute capability.
+        compute_capability = float(compute_capability)
         if compute_capability < 6.0:
           raise ValueError(
               'AlphaFold 3 requires at least GPU compute capability 6.0 (see'
@@ -1265,6 +1272,12 @@ def main(_):
       )
     else:
       raise ValueError(f'Unsupported JAX backend: {jax_backend}')
+
+    # From upstream v3.0.5: Tokamax picks kernels at trace time from JAX's
+    # default device, not from the jit target, so make the selected device
+    # the default. Applied to this fork's resolved `jax_backend`, which also
+    # handles JaxBackend.AUTO, rather than upstream's raw _JAX_BACKEND.value.
+    jax.config.update('jax_default_device', device)
 
     print('Building model from scratch...')
     model_runner = ModelRunner(
