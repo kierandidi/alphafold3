@@ -46,11 +46,13 @@ import alphafold3.constants.converters
 # with no hash check -- so the chemistry tables were silently whatever wwPDB
 # happened to serve on the day the wheel was built. Fetch one known snapshot
 # here instead and verify it, so two installs a year apart agree.
-# Sources are tried in order. The snapshot is first because it is immutable;
-# wwPDB is the fallback because it is authoritative but mutable -- it rolls the
-# CCD roughly weekly, and when it does, the hash below stops matching and the
-# snapshot becomes the only source that still works. Which URL the bytes came
-# from does not matter: CCD_SHA256 is what decides whether they are accepted.
+# Sources are tried in order, and the first whose bytes match CCD_SHA256 wins
+# regardless of position -- which URL they came from does not matter. The
+# snapshot is listed first because it is immutable; wwPDB is listed at all
+# because it is authoritative, but it is mutable and revises the CCD roughly
+# weekly, so its copy stops matching the pin without warning. If no source
+# matches, the download still succeeds and the mismatch is reported rather
+# than raised; see _download_ccd for why.
 CCD_URLS = (
     'https://github.com/kierandidi/alphafold3/releases/download/'
     'ccd-20261031/components.cif.gz',
@@ -80,60 +82,96 @@ def _libcifpp_data_dir() -> pathlib.Path:
   )
 
 
+def _fetch(url: str, staged: pathlib.Path) -> str:
+  """Downloads ``url`` to ``staged``, decompressing .gz, and returns its hash."""
+  print(f'Downloading the CCD from {url} (~114 MB)...', flush=True)
+  with urllib.request.urlopen(url) as response:
+    if url.endswith('.gz'):
+      with gzip.GzipFile(fileobj=response) as gz, open(staged, 'wb') as out:
+        shutil.copyfileobj(gz, out, length=8 * 1024 * 1024)
+    else:
+      with open(staged, 'wb') as out:
+        shutil.copyfileobj(response, out, length=8 * 1024 * 1024)
+  return _sha256(staged)
+
+
 def _download_ccd(
     dest: pathlib.Path, urls: tuple[str, ...], expected_sha256: str | None
-):
-  """Fetches components.cif to ``dest`` from the first source that works."""
-  errors = []
-  for i, url in enumerate(urls):
-    try:
-      return _download_ccd_from(dest, url, expected_sha256)
-    except Exception as exc:  # pylint: disable=broad-except
-      errors.append(f'  {url}\n    {type(exc).__name__}: {exc}')
-      if i + 1 < len(urls):
-        print(f'  {url} did not work, trying the next source...', flush=True)
-  raise ValueError(
-      'Could not obtain a usable components.cif from any source.\n'
-      + '\n'.join(errors)
-      + '\nSet LIBCIFPP_DATA_DIR to a directory holding a local copy, or'
-      ' AF3_CCD_URL to another source.'
-  )
+) -> str:
+  """Fetches components.cif to ``dest`` from the best source available.
 
-
-def _download_ccd_from(
-    dest: pathlib.Path, url: str, expected_sha256: str | None
-):
-  """Fetches components.cif to ``dest``, atomically and verified."""
-  print(f'Downloading the CCD from {url} (~114 MB)...', flush=True)
+  A source whose bytes match ``expected_sha256`` is preferred. If none match,
+  the first source that downloaded at all is used and the mismatch is reported
+  loudly, because wwPDB revises the CCD roughly weekly and an install that
+  stops working on the PDB's release schedule is worse than one whose
+  chemistry is newer than the pin. Set ``AF3_CCD_REQUIRE_PINNED=1`` to refuse
+  instead -- for reproducing a published result, where a silent chemistry
+  change is the greater harm.
+  """
+  require_pinned = os.environ.get('AF3_CCD_REQUIRE_PINNED', '') not in ('', '0')
   dest.parent.mkdir(parents=True, exist_ok=True)
-  # Stage in the destination directory so the final move cannot cross a
-  # filesystem boundary, and so a failed run cannot leave a half-written
-  # components.cif that later runs would treat as cached.
-  with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
-    staged = pathlib.Path(tmp) / 'components.cif'
-    with urllib.request.urlopen(url) as response:
-      if url.endswith('.gz'):
-        with gzip.GzipFile(fileobj=response) as gz, open(staged, 'wb') as out:
-          shutil.copyfileobj(gz, out, length=8 * 1024 * 1024)
-      else:
-        with open(staged, 'wb') as out:
-          shutil.copyfileobj(response, out, length=8 * 1024 * 1024)
+  errors = []
+  fallback = None  # (url, sha256, path) of the first source that downloaded.
 
-    actual = _sha256(staged)
-    if expected_sha256 and actual != expected_sha256:
-      raise ValueError(
-          'The downloaded CCD is not the one this package pins.\n'
-          f'  url      {url}\n'
-          f'  expected {expected_sha256}\n'
-          f'  actual   {actual}\n'
-          'Chemistry tables built from a different CCD can change model'
-          ' inputs, so this is refused rather than warned about. Set'
-          ' AF3_CCD_SHA256 to the hash above to accept it deliberately, or'
-          ' LIBCIFPP_DATA_DIR to use a local copy.'
+  # Staged in the destination directory so the final move cannot cross a
+  # filesystem boundary, and so a failed run leaves no half-written
+  # components.cif that a later run would treat as cached.
+  with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
+    for i, url in enumerate(urls):
+      staged = pathlib.Path(tmp) / f'components.cif.{i}'
+      try:
+        actual = _fetch(url, staged)
+      except Exception as exc:  # pylint: disable=broad-except
+        errors.append(f'  {url}\n    {type(exc).__name__}: {exc}')
+        if i + 1 < len(urls):
+          print(f'  {url} did not work, trying the next source...', flush=True)
+        continue
+
+      if not expected_sha256 or actual == expected_sha256:
+        staged.replace(dest)
+        print(f'  CCD ready at {dest} (sha256 {actual})', flush=True)
+        return actual
+
+      errors.append(
+          f'  {url}\n    sha256 {actual}, which is not the pinned'
+          f' {expected_sha256}'
       )
-    staged.replace(dest)
-  print(f'  CCD ready at {dest} (sha256 {actual})', flush=True)
-  return actual
+      if fallback is None:
+        fallback = (url, actual, staged)
+      if i + 1 < len(urls):
+        print(
+            f'  {url} is not the pinned CCD, trying the next source...',
+            flush=True,
+        )
+
+    if fallback is not None and not require_pinned:
+      url, actual, staged = fallback
+      staged.replace(dest)
+      print(
+          '\n'
+          '  WARNING: no source is serving the CCD this package pins.\n'
+          f'    pinned   {expected_sha256}\n'
+          f'    using    {actual}\n'
+          f'    from     {url}\n'
+          '  Proceeding, because refusing would break installs whenever the\n'
+          '  PDB revises the CCD. The chemistry tables will differ from those\n'
+          '  used to validate this release, which mainly affects ligands and\n'
+          '  modified residues; standard polymer residues are unchanged. The\n'
+          '  hash above is recorded in ccd_provenance.json. Set\n'
+          '  AF3_CCD_REQUIRE_PINNED=1 to make this an error instead.\n',
+          flush=True,
+      )
+      return actual
+
+    raise ValueError(
+        ('No source served the pinned CCD and AF3_CCD_REQUIRE_PINNED is set.'
+         if fallback is not None
+         else 'Could not obtain components.cif from any source.')
+        + '\n'
+        + '\n'.join(errors)
+        + '\nSet LIBCIFPP_DATA_DIR to a directory holding a local copy, or'
+        ' AF3_CCD_URL to another source.'
+    )
 
 
 def build_data():
