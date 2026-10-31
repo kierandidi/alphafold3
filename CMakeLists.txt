@@ -42,6 +42,19 @@ set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 # Avoid creating a libcifpp cache directory with a redundant copy of the CCD.
 set(CIFPP_CACHE_DIR "" CACHE PATH "" FORCE)
 
+# CIFPP_DOWNLOAD_CCD is left ON deliberately, despite the build-time download
+# being unpinned and the downloaded CCD being discarded from the wheel. In
+# libcifpp the same flag also gates installing mmcif_ddl.dic, mmcif_pdbx.dic
+# and mmcif_ma.dic:
+#
+#     if(CIFPP_DATA_DIR AND CIFPP_DOWNLOAD_CCD)
+#
+# so turning it off silently removes the dictionaries too, and libcifpp cannot
+# parse anything without them. The CCD is dropped from the wheel in
+# pyproject.toml instead, and `build_data` fetches a pinned, hash-verified
+# snapshot at install time -- which is what makes the chemistry reproducible,
+# rather than this download.
+
 
 # Source archives instead of git tags so CMake doesn't do slow full git clones.
 FetchContent_Declare(
