@@ -1,0 +1,71 @@
+name: Publish CCD snapshot
+
+# The wheel used to carry share/libcifpp/components.cif, which libcifpp's CMake
+# downloads from wwPDB at build time with no hash check. That made the wheel
+# 132 MB (114 MB of it this one file) and silently tied every build's chemistry
+# tables to whatever wwPDB happened to be serving that day.
+#
+# Publish an immutable, hash-verified snapshot instead, so `build_data` can
+# fetch one known CCD rather than whatever is current. Run this only when the
+# project intends to move to a newer CCD; pinning is the point.
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha256:
+        description: >-
+          SHA-256 of the DECOMPRESSED components.cif to accept. Leave empty to
+          publish whatever wwPDB currently serves (and print its hash).
+        required: false
+      tag:
+        description: "Tag to publish under, e.g. ccd-20261031"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the CCD from wwPDB
+        run: |
+          set -euo pipefail
+          curl -sSL --retry 3 --max-time 1800 \
+            https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz \
+            -o components.cif.gz
+          gunzip -kc components.cif.gz > components.cif
+          ACTUAL=$(sha256sum components.cif | cut -d' ' -f1)
+          echo "decompressed sha256: $ACTUAL"
+          echo "gz   size: $(stat -c%s components.cif.gz) bytes"
+          echo "raw  size: $(stat -c%s components.cif) bytes"
+          EXPECTED="${{ inputs.expected_sha256 }}"
+          if [ -n "$EXPECTED" ] && [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::wwPDB is serving a different CCD than expected."
+            echo "  expected $EXPECTED"
+            echo "  actual   $ACTUAL"
+            echo "Publishing it would change the chemistry tables. Refusing."
+            exit 1
+          fi
+          echo "$ACTUAL  components.cif" > components.cif.sha256
+
+      - name: Publish as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ inputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "CCD snapshot ${{ inputs.tag }}" \
+            --notes "Immutable snapshot of the wwPDB Chemical Component Dictionary, fetched $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+\`build_data\` downloads this instead of the wheel bundling it, which keeps the wheel small enough to publish and pins the chemistry tables to one known file rather than to whatever wwPDB served on the build date.
+
+Decompressed \`components.cif\` SHA-256:
+
+\`\`\`
+$(cut -d' ' -f1 components.cif.sha256)
+\`\`\`
+
+Source: https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz" \
+            components.cif.gz components.cif.sha256
