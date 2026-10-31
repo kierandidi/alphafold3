@@ -46,9 +46,15 @@ import alphafold3.constants.converters
 # with no hash check -- so the chemistry tables were silently whatever wwPDB
 # happened to serve on the day the wheel was built. Fetch one known snapshot
 # here instead and verify it, so two installs a year apart agree.
-CCD_URL = (
+# Sources are tried in order. The snapshot is first because it is immutable;
+# wwPDB is the fallback because it is authoritative but mutable -- it rolls the
+# CCD roughly weekly, and when it does, the hash below stops matching and the
+# snapshot becomes the only source that still works. Which URL the bytes came
+# from does not matter: CCD_SHA256 is what decides whether they are accepted.
+CCD_URLS = (
     'https://github.com/kierandidi/alphafold3/releases/download/'
-    'ccd-20261031/components.cif.gz'
+    'ccd-20261031/components.cif.gz',
+    'https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz',
 )
 CCD_SHA256 = '55a4a3833536556fad7d5e425dd08b8bae12142b3a3f57bfea17cc1546ab374c'
 
@@ -74,7 +80,29 @@ def _libcifpp_data_dir() -> pathlib.Path:
   )
 
 
-def _download_ccd(dest: pathlib.Path, url: str, expected_sha256: str | None):
+def _download_ccd(
+    dest: pathlib.Path, urls: tuple[str, ...], expected_sha256: str | None
+):
+  """Fetches components.cif to ``dest`` from the first source that works."""
+  errors = []
+  for i, url in enumerate(urls):
+    try:
+      return _download_ccd_from(dest, url, expected_sha256)
+    except Exception as exc:  # pylint: disable=broad-except
+      errors.append(f'  {url}\n    {type(exc).__name__}: {exc}')
+      if i + 1 < len(urls):
+        print(f'  {url} did not work, trying the next source...', flush=True)
+  raise ValueError(
+      'Could not obtain a usable components.cif from any source.\n'
+      + '\n'.join(errors)
+      + '\nSet LIBCIFPP_DATA_DIR to a directory holding a local copy, or'
+      ' AF3_CCD_URL to another source.'
+  )
+
+
+def _download_ccd_from(
+    dest: pathlib.Path, url: str, expected_sha256: str | None
+):
   """Fetches components.cif to ``dest``, atomically and verified."""
   print(f'Downloading the CCD from {url} (~114 MB)...', flush=True)
   dest.parent.mkdir(parents=True, exist_ok=True)
@@ -110,7 +138,8 @@ def _download_ccd(dest: pathlib.Path, url: str, expected_sha256: str | None):
 
 def build_data():
   """Builds intermediate data."""
-  url = os.environ.get('AF3_CCD_URL', CCD_URL)
+  override = os.environ.get('AF3_CCD_URL')
+  urls = (override,) if override else CCD_URLS
   # An explicit hash means "I know this is a different CCD and I mean it".
   expected = os.environ.get('AF3_CCD_SHA256', CCD_SHA256)
 
@@ -129,7 +158,7 @@ def build_data():
       ccd_sha256 = _sha256(cif_path)
       print(f'Using the CCD already present at {cif_path}', flush=True)
     else:
-      ccd_sha256 = _download_ccd(cif_path, url, expected)
+      ccd_sha256 = _download_ccd(cif_path, urls, expected)
 
   from alphafold3.constants.converters import ccd_msgpack_gen  # pylint: disable=g-import-not-at-top
   from alphafold3.constants.converters import chemical_component_sets_gen  # pylint: disable=g-import-not-at-top
