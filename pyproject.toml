@@ -54,7 +54,23 @@ wheel.exclude = [
     "**.pyx",
     "**/CMakeLists.txt",
     "**.cc",
-    "**.h"
+    "**.h",
+    # libcifpp's install tree is for people linking against it from C++. None
+    # of it is reachable at runtime, and it was riding along in every wheel:
+    # a static archive already linked into cpp...so, its headers, and its
+    # CMake package files.
+    "lib/libcifpp.a",
+    "lib/cmake/**",
+    "include/**",
+    # A weekly cron script and its config, which only apply to a system-wide
+    # libcifpp install. The script is also generated with the build machine's
+    # temporary directory baked into it as an absolute path, so it could not
+    # work on an end user's machine even if it were wanted.
+    "etc/**",
+    # The CCD itself: 114 MB of a 132 MB wheel. `build_data` downloads a
+    # pinned snapshot instead. The mmcif_*.dic files beside it stay, since
+    # they are small and libcifpp needs them.
+    "share/libcifpp/components.cif",
 ]
 sdist.include = [
     "LICENSE",
