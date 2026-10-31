@@ -4,6 +4,16 @@ on:
   release:
     types: [created]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build from and upload to"
+        required: true
+
+# Without this the job's token is read-only and the upload below fails with
+# "HTTP 403: Resource not accessible by integration" *after* a successful
+# build, which is how this went unnoticed until the first real release.
+permissions:
+  contents: write
 
 jobs:
   build-wheel:
@@ -12,6 +22,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # On a release event this is the tag already. On a manual run it is
+          # the tag asked for, not the branch the run was started from, so
+          # setuptools_scm still derives the released version rather than a
+          # dev version off main.
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Build wheel
         uses: pypa/cibuildwheel@v2.23.0
@@ -23,4 +39,4 @@ jobs:
       - name: Upload wheel to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.ref_name }} wheelhouse/alphafold3_open-*.whl --clobber
+        run: gh release upload ${{ inputs.tag || github.ref_name }} wheelhouse/alphafold3_open-*.whl --clobber
