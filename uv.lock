@@ -137,7 +137,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "absl-py", specifier = ">=2.3.1" },
-    { name = "dm-haiku", specifier = ">=0.0.17,<0.1" },
+    { name = "dm-haiku", specifier = "==0.0.17" },
     { name = "etils", extras = ["epath"], specifier = ">=1.13" },
     { name = "gcsfs", marker = "extra == 'gcsfs'" },
     { name = "jax", marker = "sys_platform == 'darwin'", specifier = "==0.10.2" },
@@ -145,7 +145,7 @@ requires-dist = [
     { name = "jax-mps", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.10.9" },
     { name = "msgpack", specifier = ">=1.1" },
     { name = "numpy", specifier = ">=2.4,<3" },
-    { name = "rdkit", specifier = ">=2026.3.3,<2027" },
+    { name = "rdkit", specifier = "==2026.3.3" },
     { name = "tokamax", specifier = "==0.0.12" },
     { name = "tqdm", specifier = ">=4.67" },
     { name = "zstandard", specifier = ">=0.23" },
