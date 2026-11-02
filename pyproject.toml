@@ -16,7 +16,9 @@ readme = "README.md"
 license = {file = "LICENSE"}
 dependencies = [
     "absl-py>=2.3.1",
-    "dm-haiku>=0.0.17,<0.1",
+    # Exactly pinned, like jax below and for the same reason: this is the
+    # neural-network framework the weights were trained and validated with.
+    "dm-haiku==0.0.17",
     "etils[epath]>=1.13",
     # jax, jaxlib and tokamax stay pinned exactly, and deliberately so. jaxlib
     # ships the compiled kernels the model's numerics were validated against,
@@ -33,7 +35,16 @@ dependencies = [
     # container both carry 2.4.1. Installing from this metadata alone is meant
     # to give a working environment; `uv.lock` is what reproduces an exact one.
     "numpy>=2.4,<3",
-    "rdkit>=2026.3.3,<2027",
+    # Exactly pinned because it changes results, which a range does not
+    # express. rdkit does the chemistry -- sanitization, chirality, ligand
+    # handling -- and those choices reach model inputs. Measured: the same
+    # wheel on the same node and seed folds a 76-token monomer to
+    # coord_sha cd60949b6f1c6cc0 under 2026.3.3 and 1c2957b5e2a45638 under
+    # 2026.9.1, a 0.1680 A difference, with every other input identical.
+    # This pin was briefly relaxed to a range on the grounds that nothing
+    # couples to rdkit's ABI. That was the wrong test: the question is not
+    # whether a version mismatch crashes, it is whether it moves numbers.
+    "rdkit==2026.3.3",
     "tokamax==0.0.12",
     "tqdm>=4.67",
     "zstandard>=0.23",
