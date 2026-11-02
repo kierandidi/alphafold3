@@ -17,9 +17,11 @@ on:
           SHA-256 of the DECOMPRESSED components.cif to accept. Leave empty to
           publish whatever wwPDB currently serves (and print its hash).
         required: false
+        default: "55a4a3833536556fad7d5e425dd08b8bae12142b3a3f57bfea17cc1546ab374c"
       tag:
         description: "Tag to publish under, e.g. ccd-20261031"
         required: true
+        default: "ccd-20261031"
 
 permissions:
   contents: write
@@ -54,18 +56,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          SHA=$(cut -d' ' -f1 components.cif.sha256)
+          FETCHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # Built line by line into a file rather than passed as one long
+          # --notes argument: a multi-line string here has to stay indented
+          # inside this block scalar, and prose that wraps to column 0 makes
+          # the whole workflow unparseable -- which is how this file sat
+          # registered but untriggerable.
+          {
+            echo "Immutable snapshot of the wwPDB Chemical Component Dictionary,"
+            echo "fetched ${FETCHED}."
+            echo
+            echo 'Downloaded by `build_data` instead of being bundled in the wheel.'
+            echo 'That keeps the wheel under the size PyPI allows, and pins the'
+            echo 'chemistry tables to one known file rather than to whatever wwPDB'
+            echo 'was serving on the day a given artifact was built.'
+            echo
+            echo 'Decompressed `components.cif` SHA-256:'
+            echo
+            echo '```'
+            echo "${SHA}"
+            echo '```'
+            echo
+            echo 'Source: https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz'
+          } > notes.md
           gh release create "${{ inputs.tag }}" \
             --repo "${{ github.repository }}" \
             --title "CCD snapshot ${{ inputs.tag }}" \
-            --notes "Immutable snapshot of the wwPDB Chemical Component Dictionary, fetched $(date -u +%Y-%m-%dT%H:%M:%SZ).
-
-\`build_data\` downloads this instead of the wheel bundling it, which keeps the wheel small enough to publish and pins the chemistry tables to one known file rather than to whatever wwPDB served on the build date.
-
-Decompressed \`components.cif\` SHA-256:
-
-\`\`\`
-$(cut -d' ' -f1 components.cif.sha256)
-\`\`\`
-
-Source: https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz" \
+            --notes-file notes.md \
             components.cif.gz components.cif.sha256
