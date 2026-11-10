@@ -40,3 +40,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload ${{ inputs.tag || github.ref_name }} wheelhouse/alphafold3_open-*.whl --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: wheelhouse/alphafold3_open-*.whl
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    # Trusted publishing: no API token stored anywhere. PyPI is configured to
+    # accept this repository, this workflow file and this environment, and
+    # mints a short-lived credential per run.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+
+      # No sdist is published on purpose. Building from source needs cmake, a
+      # C++ toolchain and the CCD, so an sdist would turn `pip install` on an
+      # unsupported platform into a long compile that fails late. With wheels
+      # only, pip says "no matching distribution" immediately and plainly.
+      - uses: pypa/gh-action-pypi-publish@release/v1
