@@ -72,6 +72,44 @@ def _get_leaving_atom_mask(
   return drop_atom_filter_atoms
 
 
+def declared_bond_leaving_atoms(
+    bonded_atom_pairs, res_name_of, ccd: chemical_components.Ccd
+) -> dict[tuple[str, int], set[str]]:
+  """Atom names to drop per (chain_id, res_id): the CCD leaving group of each atom a declared bond forms on, as
+  OpenFold3's / protenix's remove_leaving_atoms: one group per bond at that atom, heavy atoms only, the first groups in
+  CCD order where several are possible."""
+  count = {}
+  for pair in bonded_atom_pairs or ():
+    for atom in pair:
+      key = (str(atom[0]), int(atom[1]), str(atom[2]))
+      count[key] = count.get(key, 0) + 1
+  drop = {}
+  for (chain, res, centre), n_bonds in count.items():
+    entry = ccd.get(res_name_of.get((chain, res), ''))
+    if not entry:
+      continue
+    names = list(entry['_chem_comp_atom.atom_id'])
+    leaving = {nm for nm, flag, el in zip(names, entry['_chem_comp_atom.pdbx_leaving_atom_flag'],
+                                          entry['_chem_comp_atom.type_symbol']) if flag == 'Y' and el != 'H'}
+    nbrs = {}
+    for x, y in zip(entry.get('_chem_comp_bond.atom_id_1', []), entry.get('_chem_comp_bond.atom_id_2', [])):
+      nbrs.setdefault(x, []).append(y)
+      nbrs.setdefault(y, []).append(x)
+    groups = []
+    for start in sorted((n for n in nbrs.get(centre, []) if n in leaving), key=names.index):
+      group, todo = set(), [start]
+      while todo:
+        n = todo.pop()
+        if n not in group:
+          group.add(n)
+          todo += [m for m in nbrs.get(n, []) if m in leaving and m != centre]
+      if group not in groups:
+        groups.append(group)
+    for group in groups[:n_bonds]:
+      drop.setdefault((chain, res), set()).update(group)
+  return drop
+
+
 def clean_structure(
     struc: structure.Structure,
     ccd: chemical_components.Ccd,
@@ -261,6 +299,7 @@ def create_empty_output_struc_and_layout(
     ligand_ligand_bonds: atom_layout.AtomLayout | None = None,
     drop_ligand_leaving_atoms: bool = False,
     fix_standalone_glycans: bool = False,
+    ccd_leaving: dict[tuple[str, int], set[str]] | None = None,
 ) -> tuple[structure.Structure, atom_layout.AtomLayout]:
   """Make zero-coordinate structure from all physical residues.
 
@@ -274,6 +313,7 @@ def create_empty_output_struc_and_layout(
     drop_ligand_leaving_atoms: Flag for handling leaving atoms for ligands.
     fix_standalone_glycans: If True, standalone glycans are preserved when
       drop_ligand_leaving_atoms is True.
+    ccd_leaving: see atom_layout.make_flat_atom_layout.
 
   Returns:
     Tuple of structure with all bonds, physical residues and coordinates set to
@@ -315,6 +355,7 @@ def create_empty_output_struc_and_layout(
       ligand_ligand_bonds=ligand_ligand_bonds,
       drop_ligand_leaving_atoms=drop_ligand_leaving_atoms,
       fix_standalone_glycans=fix_standalone_glycans,
+      ccd_leaving=ccd_leaving,
   )
 
   empty_output_struc = atom_layout.make_structure(

@@ -498,6 +498,11 @@ def populate_missing_ccd_data(
   return ChemicalComponentsData(chem_comp=chem_comp)
 
 
+# AF3 builds an unknown amino acid as GLY; OpenFold3 builds it from the CCD's UNK (N CA C O CB CG). Clearing this
+# (`unk_as_ccd` context in `model/pipeline/of3_features.py`) makes a residue named UNK build from its own CCD entry.
+UNK_AS_GLY = True
+
+
 def get_all_atoms_in_entry(
     ccd: chemical_components.Ccd, res_name: str
 ) -> Mapping[str, Sequence[str]]:
@@ -513,7 +518,7 @@ def get_all_atoms_in_entry(
   """
   # The CCD version of 'UNK' is weird. It has a CB and a CG atom. We just want
   # the minimal amino-acid here which is GLY.
-  if res_name == 'UNK':
+  if res_name == 'UNK' and UNK_AS_GLY:
     res_name = 'GLY'
   ccd_data = ccd.get(res_name)
   if not ccd_data:
@@ -545,8 +550,14 @@ def get_all_atoms_in_entry(
   return res_atoms
 
 
-@functools.lru_cache(maxsize=128)
 def get_res_atom_names(ccd: chemical_components.Ccd, res_name: str) -> set[str]:
   """Gets the names of the atoms in a given CCD residue."""
+  return _get_res_atom_names(ccd, res_name, UNK_AS_GLY)
+
+
+@functools.lru_cache(maxsize=128)
+def _get_res_atom_names(
+    ccd: chemical_components.Ccd, res_name: str, unk_as_gly: bool
+) -> set[str]:
   atoms = get_all_atoms_in_entry(ccd, res_name)['_chem_comp_atom.atom_id']
   return set(atoms)

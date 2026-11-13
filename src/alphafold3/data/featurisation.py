@@ -20,12 +20,14 @@
 """AlphaFold 3 featurisation pipeline."""
 
 from collections.abc import Sequence
+import contextlib
 import datetime
 import time
 
 from alphafold3.common import folding_input
 from alphafold3.constants import chemical_components
 from alphafold3.model import features
+from alphafold3.model.pipeline import of3_features
 from alphafold3.model.pipeline import pipeline
 import numpy as np
 
@@ -53,6 +55,7 @@ def featurise_input(
     resolve_msa_overlaps: bool = True,
     fix_standalone_glycans: bool = False,
     of3_weights: bool = False,
+    openbind0: bool = False,
     verbose: bool = False,
 ) -> Sequence[features.BatchDict]:
   """Featurise the folding input.
@@ -83,12 +86,23 @@ def featurise_input(
       undesirable behavior, but moves away from the regime where AlphaFold 3 was
       trained and evaluated. This has only an effect if filter_leaving_atoms is
       True in the WholePdbPipeline.Config.
+    of3_weights: Featurise for the converted OpenFold3 preview-2 weights (this is
+      the only thing it changes: backbone links are implicit in the sequence).
+    openbind0: Featurise for OpenBind-0 (OpenFold3 v0.5.0), which also applies
+      OpenFold3's featurisation conventions (see `model/pipeline/of3_features.py`):
+      CCD unknown residues, no terminal OXT/OP3, leaving atoms, a capped and
+      deduplicated main MSA, gap restypes for empty template slots, and so on.
+      Requires `of3_weights`.
     verbose: Whether to print progress messages.
 
   Returns:
     A featurised batch for each rng_seed in the input.
   """
   validate_fold_input(fold_input)
+  if openbind0 and not of3_weights:
+    raise ValueError('openbind0 featurisation requires of3_weights=True')
+  if openbind0:
+    fold_input = of3_features.prepare_input(fold_input)
 
   # Set up data pipeline for single use.
   data_pipeline = pipeline.WholePdbPipeline(
@@ -99,6 +113,7 @@ def featurise_input(
           resolve_msa_overlaps=resolve_msa_overlaps,
           fix_standalone_glycans=fix_standalone_glycans,
           of3_weights=of3_weights,
+          openbind0=openbind0,
       ),
   )
 
@@ -107,12 +122,15 @@ def featurise_input(
     featurisation_start_time = time.time()
     if verbose:
       print(f'Featurising data with seed {rng_seed}.')
-    batch = data_pipeline.process_item(
-        fold_input=fold_input,
-        ccd=ccd,
-        random_state=np.random.RandomState(rng_seed),
-        random_seed=rng_seed,
-    )
+    with of3_features.unk_as_ccd() if openbind0 else contextlib.nullcontext():
+      batch = data_pipeline.process_item(
+          fold_input=fold_input,
+          ccd=ccd,
+          random_state=np.random.RandomState(rng_seed),
+          random_seed=rng_seed,
+      )
+    if openbind0:
+      of3_features.apply(batch, fold_input)
     if verbose:
       print(
           f'Featurising data with seed {rng_seed} took'
