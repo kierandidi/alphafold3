@@ -178,3 +178,23 @@ upstream reasons). They apply only with `openbind0=True`; preview-2 is featurise
 One deliberate difference from the reference: this fork keeps explicit **polymer-polymer** crosslinks as token bonds for
 AlphaFold 3 weights, and for preview-2. OpenFold3's `filter_fully_atomized_bonds` keeps a token bond only when **both** ends
 are atomised, so for OpenBind-0 such a bond is dropped unless both residues are non-standard (`keep_fully_atomized_bonds`).
+
+## How OpenBind-0 was validated
+
+Against `sokrypton/alphafold3` `main --model openbind0` (the reference LocalFold's oracle dumps come from), on the same inputs,
+at float32 with XLA's deterministic ops, on an H200:
+
+* **Featuriser**: 36 jobs (AlphaFold 3's 13 example jobs and its kitchen-sink input, glycans, modified residues and bases, DNA/RNA,
+  unknown residues, a 7,907-row alignment, two template cases, five RFD4 designs, padded and unpadded): **0 differing fields in 66
+  feature arrays on every job**.
+* **Converted weights**: identical to the reference converter's tensor for tensor except `ref_element` (the reference folds the
+  element index shift into the weight rows, this fork shifts the index in the graph; the two select the same row).
+* **Fold**: at full matmul precision the worst 8 cases agree to ≤0.003 Å RMSD (≤0.08 Å max atom), trunk contact probabilities to
+  ≤1.2e-4. At JAX's default matmul precision 21 of 36 jobs agree to ≤0.02 Å; the multi-chain/ligand cases without an MSA drift by up to
+  2.9 Å because the 200-step sampler amplifies a 1e-3 numerical difference, which is what the full-precision rerun shows.
+* **Preview-2 is untouched**: reconversion is byte-identical; featurised batches are bitwise identical on the 29-job corpus; deterministic
+  folds are bitwise identical in every output.
+
+Not verified: against stock OpenFold3 v0.5.0 (PyTorch) directly (the reference was validated against it by its authors: 21 input types, 0.000 Å);
+inputs with cyclic chains, SMILES-only ligands beyond the biotin example, `constraints`, ESM/language-model inputs; the reference does not
+cover bonded inputs for OpenBind-0 beyond the example jobs here.
