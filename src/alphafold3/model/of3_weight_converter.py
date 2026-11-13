@@ -950,6 +950,16 @@ def save_af3_params(params: dict[str, dict[str, np.ndarray]], output_dir: Path |
     return output_path
 
 
+# The public checkpoints this converter is known to handle: sha256 -> (family, where they are published).
+KNOWN_CHECKPOINTS = {
+    '3ae79a701f55dbc184002d010c92d347a35faabb981314c2fd1325211af40b77': (
+        WEIGHT_FAMILY_PREVIEW2, 'https://openfold.s3.amazonaws.com/staging/of3-p2-155k.pt'),
+    'bd43301c011d5f87580d3e8b548658869433e4488399feb03035ba248f8e29e4': (
+        WEIGHT_FAMILY_OPENBIND0,
+        'https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-ob-2025-06-30-174k.pt'),
+}
+
+
 def write_provenance(
     output_dir: Path | str,
     *,
@@ -979,6 +989,11 @@ def write_provenance(
                 h.update(chunk)
         return h.hexdigest()
 
+    source_digest = _sha256(source_checkpoint)
+    known = KNOWN_CHECKPOINTS.get(source_digest)
+    if known is not None and known[0] != family:
+        raise ValueError(
+            f'{source_checkpoint} is the {known[0]} checkpoint, not {family}')
     record = {
         'schema_version': 1,
         'weight_family': family,
@@ -987,7 +1002,8 @@ def write_provenance(
         'source_checkpoint': {
             'filename': source_checkpoint.name,
             'bytes': source_checkpoint.stat().st_size,
-            'sha256': _sha256(source_checkpoint),
+            'sha256': source_digest,
+            **({'url': known[1]} if known is not None else {}),
         },
         'converted_checkpoint': {
             'filename': weights.name,
