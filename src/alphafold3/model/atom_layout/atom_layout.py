@@ -763,6 +763,7 @@ def make_flat_atom_layout(
     skip_unk_residues: bool = True,
     drop_ligand_leaving_atoms: bool = False,
     fix_standalone_glycans: bool = False,
+    ccd_leaving: Mapping[tuple[str, int], set[str]] | None = None,
 ) -> AtomLayout:
   """Make a flat atom layout for given residues.
 
@@ -787,6 +788,14 @@ def make_flat_atom_layout(
       undesirable behavior, but moves away from the regime where AlphaFold 3 was
       trained and evaluated. This has only an effect if
       drop_ligand_leaving_atoms is True.
+    ccd_leaving: the leaving atoms as OpenFold3 / protenix remove them, by the
+      CCD's own flags: a linked residue keeps an OXT the CCD does not mark
+      leaving (the free alpha-carboxyl of a side-chain-linked IAS or FGA), a
+      ligand is built whole (an unbonded sugar keeps its O1), and the atom
+      names given per (chain_id, res_id) are dropped: the leaving groups at
+      declared bonds, and the terminal / non-standard-residue atoms
+      `of3_features.leaving_atoms` computes. A leading '!' on a name cancels a
+      drop AF3's own link rule would make. None is AlphaFold 3's rule.
 
   Returns:
     an `AtomLayout` object
@@ -863,6 +872,16 @@ def make_flat_atom_layout(
         drop_ligand_leaving_atoms=drop_ligand_leaving_atoms,
         fix_standalone_glycans=fix_standalone_glycans,
     )
+
+    if ccd_leaving is not None:
+      entry = ccd.get(residues.res_name[idx]) or {}
+      flags = dict(zip(entry.get('_chem_comp_atom.atom_id', ()), entry.get('_chem_comp_atom.pdbx_leaving_atom_flag', ())))
+      drop_atoms -= {n for n in ('OXT', 'HXT') if flags.get(n, 'Y') != 'Y'}
+      if residues.chain_type[idx] in mmcif_names.LIGAND_CHAIN_TYPES:
+        # OpenFold3 / protenix keep a glycan's unbonded O1, which AF3 drops (fix_standalone_glycans off)
+        drop_atoms = set()
+      extra = ccd_leaving.get((str(residues.chain_id[idx]), int(residues.res_id[idx])), set())
+      drop_atoms = (drop_atoms - {n[1:] for n in extra if n.startswith('!')}) | {n for n in extra if not n.startswith('!')}
 
     # If deprotonation info is available, remove the specific atoms.
     if residues.deprotonation is not None:

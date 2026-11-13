@@ -63,6 +63,7 @@ from alphafold3.data import pipeline
 from alphafold3.data.tools import shards
 from alphafold3.model import features
 from alphafold3.model import model
+from alphafold3.model import of3_weight_family as of3_weight_family_lib
 from alphafold3.model import params
 from alphafold3.model import post_processing
 from alphafold3.model.components import utils
@@ -487,6 +488,17 @@ _OF3_WEIGHTS = flags.DEFINE_bool(
     ' when --of3_checkpoint is provided. Also set this flag when --model_dir'
     ' already points to a directory of pre-converted OF3 weights.',
 )
+_OF3_WEIGHT_FAMILY = flags.DEFINE_enum(
+    'of3_weight_family',
+    None,
+    ['openfold3', 'openbind0'],
+    'Which OpenFold3 release the converted weights are: `openfold3` (the'
+    ' preview-2 weights) or `openbind0` (OpenBind-0, OpenFold3 v0.5.0). They'
+    ' are different models with different forward conventions, so this must'
+    ' match the weights. By default it is read from'
+    ' of3_ported_weights.provenance.json in --model_dir, or from the parameter'
+    ' file itself.',
+)
 _NOJIT = flags.DEFINE_bool(
     'nojit',
     False,
@@ -546,6 +558,8 @@ def _maybe_convert_of3_weights(of3_checkpoint: str, model_dir: str) -> str:
 
   t0 = time.perf_counter()
   out = save_af3_params(af3_params, out_dir)
+  from alphafold3.model.of3_weight_converter import of3_release, write_provenance
+  write_provenance(out_dir, source_checkpoint=of3_checkpoint, family=of3_release(sd))
   print(f'  Saved {out}  ({out.stat().st_size/1e6:.0f} MB, {time.perf_counter()-t0:.1f}s)')
   return str(out_dir)
 
@@ -558,6 +572,7 @@ def make_model_config(
     return_embeddings: bool = False,
     return_distogram: bool = False,
     of3_weights: bool = False,
+    openbind0: bool = False,
 ) -> model.Model.Config:
   """Returns a model config with some defaults overridden."""
   config = model.Model.Config()
@@ -569,6 +584,7 @@ def make_model_config(
   config.return_embeddings = return_embeddings
   config.return_distogram = return_distogram
   config.global_config.of3_weights = of3_weights
+  config.global_config.openbind0 = openbind0
   return config
 
 
@@ -1239,6 +1255,19 @@ def main(_):
     model_dir = _maybe_convert_of3_weights(_OF3_CHECKPOINT.value, model_dir)
     use_of3_weights = True
 
+  of3_weight_family = None
+  if use_of3_weights:
+    of3_weight_family = (
+        _OF3_WEIGHT_FAMILY.value or of3_weight_family_lib.detect_weight_family(model_dir)
+    )
+    if of3_weight_family is None:
+      raise ValueError(
+          f'Could not tell which OpenFold3 release the weights in {model_dir}'
+          ' are. Pass --of3_weight_family=openfold3 (preview-2) or'
+          ' --of3_weight_family=openbind0 (OpenBind-0 / OpenFold3 v0.5.0).'
+      )
+    print(f'OpenFold3 weight family: {of3_weight_family}')
+
   if not use_of3_weights:
     notice = textwrap.wrap(
         'Running AlphaFold 3. Please note that standard AlphaFold 3 model'
@@ -1291,6 +1320,7 @@ def main(_):
             return_embeddings=_SAVE_EMBEDDINGS.value,
             return_distogram=_SAVE_DISTOGRAM.value,
             of3_weights=use_of3_weights,
+            openbind0=of3_weight_family == 'openbind0',
         ),
         device=device,
         model_dir=model_dir,

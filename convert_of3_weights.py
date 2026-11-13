@@ -55,7 +55,9 @@ def main() -> int:
     from alphafold3.model.of3_weight_converter import (
         load_of3_checkpoint,
         map_of3_to_af3,
+        of3_release,
         save_af3_params,
+        write_provenance,
     )
 
     print(f'Loading {args.of3_checkpoint}  (use_ema={args.use_ema}) ...')
@@ -63,6 +65,8 @@ def main() -> int:
     sd = load_of3_checkpoint(args.of3_checkpoint, use_ema=args.use_ema)
     print(f'  {len(sd)} tensors loaded  ({time.perf_counter()-t0:.1f}s)')
 
+    family = of3_release(sd)
+    print(f'  weight family: {family}')
     print('Converting ...')
     t0 = time.perf_counter()
     af3_params = map_of3_to_af3(
@@ -80,8 +84,12 @@ def main() -> int:
     t0 = time.perf_counter()
     out = save_af3_params(af3_params, args.output_dir)
     print(f'  {out}  ({out.stat().st_size/1e6:.0f} MB, {time.perf_counter()-t0:.1f}s)')
+    prov = write_provenance(args.output_dir, source_checkpoint=args.of3_checkpoint,
+                            family=family, use_ema=args.use_ema)
+    print(f'  {prov}')
     print(f'\nDone. Use with:\n'
-          f'  python run_alphafold.py --model_dir {args.output_dir} --of3_weights ...')
+          f'  python run_alphafold.py --model_dir {args.output_dir} --of3_weights ...\n'
+          f'(the weight family, {family!r}, is read from the provenance file)')
     return 0
 
 

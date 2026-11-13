@@ -341,6 +341,11 @@ class Model(hk.Module):
             seq_mask=batch.token_features.mask,  # pyrefly: ignore[missing-attribute]
             token_atoms_to_pseudo_beta=batch.pseudo_beta_info.token_atoms_to_pseudo_beta,  # pyrefly: ignore[missing-attribute]
             asym_id=batch.token_features.asym_id,  # pyrefly: ignore[missing-attribute]
+            atom_name_chars=(
+                batch.ref_structure.atom_name_chars  # pyrefly: ignore[missing-attribute]
+                if self.global_config.openbind0
+                else None
+            ),
         ),
         in_axes=0,
     )(samples['atom_positions'])

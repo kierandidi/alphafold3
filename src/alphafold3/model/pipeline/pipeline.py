@@ -35,6 +35,7 @@ from alphafold3.model.atom_layout import atom_layout
 from alphafold3.model import feat_batch
 from alphafold3.model import features
 from alphafold3.model.pipeline import inter_chain_bonds
+from alphafold3.model.pipeline import of3_features
 from alphafold3.model.pipeline import structure_cleaning
 from alphafold3.structure import chemical_components as struc_chem_comps
 import numpy as np
@@ -248,6 +249,9 @@ class WholePdbPipeline:
     resolve_msa_overlaps: bool = True
     fix_standalone_glycans: bool = False
     of3_weights: bool = False
+    # OpenBind-0 (OpenFold3 v0.5.0) featurisation: see of3_features.py. Requires
+    # of3_weights; preview-2 (of3_weights alone) is featurised as it always was.
+    openbind0: bool = False
 
   def __init__(self, *, config: Config):
     """Initializes WholePdb data pipeline.
@@ -266,6 +270,7 @@ class WholePdbPipeline:
       paired_msa_by_chain_id: Mapping[str, str],
       templates_by_chain_id: Mapping[str, Sequence[folding_input.Template]],
       random_seed: int | None = None,
+      ccd_leaving: Mapping[tuple[str, int], set[str]] | None = None,
   ) -> feat_batch.Batch:
     """Computes features for a structure and associated MSAs/templates."""
     if random_seed is None:
@@ -296,6 +301,10 @@ class WholePdbPipeline:
         flatten_non_standard_residues=self._config.flatten_non_standard_residues,
         of3_weights=self._config.of3_weights,
     )
+    if self._config.openbind0:
+      polymer_polymer_bonds = of3_features.keep_fully_atomized_bonds(
+          polymer_polymer_bonds
+      )
 
     # Clean structure.
     cleaned_struc = structure_cleaning.clean_structure(
@@ -341,6 +350,7 @@ class WholePdbPipeline:
             ligand_ligand_bonds=ligand_ligand_bonds,
             drop_ligand_leaving_atoms=self._config.drop_ligand_leaving_atoms,
             fix_standalone_glycans=self._config.fix_standalone_glycans,
+            ccd_leaving=ccd_leaving,
         )
     )
 
@@ -561,6 +571,9 @@ class WholePdbPipeline:
   ) -> features.BatchDict:
     """Takes requests from in_queue, adds (key, serialized ex) to out_queue."""
     struct = fold_input.to_structure(ccd=ccd)
+    ccd_leaving = None
+    if self._config.openbind0:
+      ccd_leaving = of3_features.leaving_atoms(struct, fold_input, ccd)
     unpaired_msa_by_chain_id = {}
     paired_msa_by_chain_id = {}
     templates_by_chain_id = {}
@@ -581,6 +594,7 @@ class WholePdbPipeline:
         paired_msa_by_chain_id=paired_msa_by_chain_id,
         templates_by_chain_id=templates_by_chain_id,
         random_seed=random_seed,
+        ccd_leaving=ccd_leaving,
     )
     np_example = batch.as_data_dict()
 

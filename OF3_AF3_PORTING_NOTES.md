@@ -118,3 +118,83 @@ Both AF3 and OF3 initialize the random Fourier embedding weights with seed 42, b
 | Column attention pair bias transposed (OF3 deviation from paper) | Low — model compensates during training | No — OF3 weights only |
 | Diffusion transformer pair conditioning per-block vs. shared | Architectural — incompatible param layouts | Only relevant if training from scratch |
 | Fourier embedding constants differ between JAX and PyTorch RNG | Medium — wrong noise conditioning without fix | No — OF3 weights only |
+
+---
+
+# OpenBind-0 (OpenFold3 v0.5.0)
+
+OpenBind-0 is OpenFold3's **v0.5.0** release. It is a different model from the preview-2 weights the sections above
+describe, not a newer file of the same one: it has different forward conventions, and feeding its weights through
+the preview-2 branches (or the reverse) does not error. Every shape agrees but one, and the fold simply comes out
+slightly different. Both are Apache 2.0.
+
+| | OpenFold3 preview-2 (`weight_family: openfold3`) | OpenBind-0 (`weight_family: openbind0`) |
+|---|---|---|
+| checkpoint | `s3://openfold/staging/of3-p2-155k.pt` | `https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-ob-2025-06-30-174k.pt` (sha256 `bd43301c…8e29e4`) |
+| column-attention pair bias | `Linear(z[k, q])` (transposed) | `Linear(z[q, k])`, as AF3's Algorithm 15 |
+| diffusion transformer pair LayerNorm | one per block | **one** for the whole stack, as AF3 |
+| diffusion single conditioning | 831 channels (see below) | **833** channels (OpenFold3's 32-class restype/profile blocks) |
+| featuriser | AF3's, with implicit backbone links | OpenFold3's (see below) |
+
+The family is a property of the converted weights: `of3_ported_weights.provenance.json` carries `weight_family`,
+`alphafold3.model.of3_weight_family.detect_weight_family(model_dir)` reads it (or, without a stamp, tells them apart by
+the one parameter only OpenBind-0 has, `transformer/pair_input_layer_norm`), and `run_alphafold.py` passes it to the
+model config (`GlobalConfig.openbind0`) and the featuriser (`featurise_input(..., openbind0=True)`).
+`openbind0` requires `of3_weights`; everything `of3_weights` switches on (symmetric token bonds, padded keys masked in
+the atom-pair offsets, trained Fourier constants, 0-indexed elements) stays on.
+
+## What is different in the graph (`GlobalConfig.openbind0`)
+
+* `network/modules.py`: the transposed column pair bias is **not** applied.
+* `network/diffusion_transformer.py`: the per-block pair LayerNorm path is **not** taken; the stock AF3 path runs, with the
+  converted `transformer/pair_input_layer_norm` and a `pair_logits_projection` grouped by super-block.
+* `network/diffusion_head.py`: the two zero columns OpenFold3 carries for unknown DNA are re-inserted before
+  `single_cond_initial_norm`. A zero column is free before a Linear and not before a LayerNorm (it moves the mean and the
+  variance and the width becomes 833), so the converter keeps the two rows (`_reorder_features_1d(pad_unk_dna=True)`).
+* `network/template_modules.py`: a template residue typed UNK (a modified amino acid) keeps its geometry, read through ALA's
+  dense slots.
+* `network/confidence_head.py`: the per-atom heads (pLDDT, experimentally resolved) are indexed by the atom's *rank* among the
+  token's real atoms, not by its dense slot. They agree until a slot is empty; a nucleotide's dropped 5' OP3 is slot 0, so by slot
+  every atom of that nucleotide read its neighbour's logit (mean |ΔpLDDT| of 0.7-2.0 against the reference on DNA/RNA, 0.00-0.13
+  once indexed by rank; the structure itself was unaffected).
+
+## What the converter does differently
+
+`of3_weight_converter.of3_release(state_dict)` tells the releases apart by tensor, never by file name. For OpenBind-0 the
+transformer stack lives under `__layer_stack_with_per_layer` and the 24 per-block pair projections are regrouped by
+super-block; the confidence head's `linear_i`/`linear_j` target-feature projections go to AF3's `right`/`left` (AF3 names
+the pair-embedding sides the other way round in its two embedding sites; OpenFold3 uses `linear_i` = row `i` in both).
+**The preview-2 conversion keeps its published mapping, which has these two swapped**: reconverting the preview-2 checkpoint
+with this converter is byte-identical to the published file (sha256 `7ae00e49…`), which is why it was left alone;
+`confidence_embed_row_col='row_is_right'` converts it the corrected way. The swap transposes the pair embedding the
+confidence pairformer starts from and shows up in the asymmetric outputs (PAE, and pTM/ipTM/min-iPAE that ride on it).
+
+## The featuriser (`model/pipeline/of3_features.py`, `of3_templates.py`)
+
+The functions are taken from sokrypton/alphafold3 `main` (Apache 2.0), the reference LocalFold validates OpenBind-0
+against, restricted to the conventions it declares for `openbind0` (see the module docstring for the list, with its
+upstream reasons). They apply only with `openbind0=True`; preview-2 is featurised exactly as before.
+
+One deliberate difference from the reference: this fork keeps explicit **polymer-polymer** crosslinks as token bonds for
+AlphaFold 3 weights, and for preview-2. OpenFold3's `filter_fully_atomized_bonds` keeps a token bond only when **both** ends
+are atomised, so for OpenBind-0 such a bond is dropped unless both residues are non-standard (`keep_fully_atomized_bonds`).
+
+## How OpenBind-0 was validated
+
+Against `sokrypton/alphafold3` `main --model openbind0` (the reference LocalFold's oracle dumps come from), on the same inputs,
+at float32 with XLA's deterministic ops, on an H200:
+
+* **Featuriser**: 36 jobs (AlphaFold 3's 13 example jobs and its kitchen-sink input, glycans, modified residues and bases, DNA/RNA,
+  unknown residues, a 7,907-row alignment, two template cases, five RFD4 designs, padded and unpadded): **0 differing fields in 66
+  feature arrays on every job**.
+* **Converted weights**: identical to the reference converter's tensor for tensor except `ref_element` (the reference folds the
+  element index shift into the weight rows, this fork shifts the index in the graph; the two select the same row).
+* **Fold**: at full matmul precision the worst 8 cases agree to ≤0.003 Å RMSD (≤0.08 Å max atom), trunk contact probabilities to
+  ≤1.2e-4. At JAX's default matmul precision 21 of 36 jobs agree to ≤0.02 Å; the multi-chain/ligand cases without an MSA drift by up to
+  2.9 Å because the 200-step sampler amplifies a 1e-3 numerical difference, which is what the full-precision rerun shows.
+* **Preview-2 is untouched**: reconversion is byte-identical; featurised batches are bitwise identical on the 29-job corpus; deterministic
+  folds are bitwise identical in every output.
+
+Not verified: against stock OpenFold3 v0.5.0 (PyTorch) directly (the reference was validated against it by its authors: 21 input types, 0.000 Å);
+inputs with cyclic chains, SMILES-only ligands beyond the biotin example, `constraints`, ESM/language-model inputs; the reference does not
+cover bonded inputs for OpenBind-0 beyond the example jobs here.

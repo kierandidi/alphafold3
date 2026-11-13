@@ -115,6 +115,7 @@
     "final_init": "zeros",
     "flash_attention_implementation": "triton",
     "of3_weights": false,
+    "openbind0": false,
     "pair_attention_chunk_size": [
       [
         1536,

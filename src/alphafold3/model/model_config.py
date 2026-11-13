@@ -45,3 +45,18 @@ class GlobalConfig(base_config.BaseConfig):
   # When True, enables OpenFold3 weight compatibility mode.
   # Set to False (default) when using original AlphaFold3 weights.
   of3_weights: bool = False
+  # With `of3_weights`, selects OpenBind-0 (OpenFold3 v0.5.0) instead of the
+  # OpenFold3 preview-2 weights. The two releases are different models with
+  # different forward conventions; everything `of3_weights` switches on stays on
+  # (symmetric token bonds, padded keys masked in the atom-pair offsets, trained
+  # Fourier constants, 0-indexed elements) and three things change:
+  #   * the column-attention pair bias is NOT computed from the transposed pair
+  #     (preview-2 does; v0.5.0 follows AlphaFold 3's Algorithm 15);
+  #   * the diffusion transformer LayerNorms the pair conditioning ONCE for the
+  #     whole stack (AlphaFold 3's arrangement), not once per block;
+  #   * the diffusion single conditioning is normalised over the 833 channels of
+  #     OpenFold3's 32-class restype/profile blocks, not AlphaFold 3's 831.
+  # Converted weights say which family they are (`of3_ported_weights.provenance.json`
+  # `weight_family`); a mismatch is silent -- every shape agrees except the
+  # 833-wide conditioning -- so the runner must pass the right one.
+  openbind0: bool = False

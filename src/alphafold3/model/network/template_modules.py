@@ -268,8 +268,21 @@ class SingleTemplateEmbedding(hk.Module):
       dense_atom_positions = templates.atom_positions
       dense_atom_positions *= dense_atom_mask[..., None]
 
+      # OpenFold3 v0.5.0 reads a template residue's frame and pseudo-beta by
+      # atom NAME (N, CA, C; CB, CA for GLY) whatever its restype, so a residue
+      # typed UNK (a modified amino acid) keeps its geometry: read it through
+      # ALA's slots, which every standard residue shares. AF3's own layout for
+      # UNK puts N in every slot.
+      geometry_aatype = templates.aatype
+      if self.global_config.openbind0:
+        geometry_aatype = jnp.where(
+            geometry_aatype
+            == residue_names.PROTEIN_TYPES_WITH_UNKNOWN.index(residue_names.UNK),
+            residue_names.PROTEIN_TYPES_WITH_UNKNOWN.index('ALA'),
+            geometry_aatype,
+        )
       pseudo_beta_positions, pseudo_beta_mask = scoring.pseudo_beta_fn(
-          templates.aatype, dense_atom_positions, dense_atom_mask
+          geometry_aatype, dense_atom_positions, dense_atom_mask
       )
       pseudo_beta_mask_2d = (
           pseudo_beta_mask[:, None] * pseudo_beta_mask[None, :]
@@ -298,7 +311,7 @@ class SingleTemplateEmbedding(hk.Module):
 
       template_group_indices = jnp.take(
           protein_data_processing.RESTYPE_RIGIDGROUP_DENSE_ATOM_IDX,
-          templates.aatype,
+          geometry_aatype,
           axis=0,
       )
       rigid, backbone_mask = make_backbone_rigid(
