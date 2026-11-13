@@ -80,7 +80,13 @@ def _reorder_msa_weights(w: np.ndarray) -> np.ndarray:
     return np.concatenate([w[_AF3_TO_OF3_MSA], w[32:34]], axis=0)
 
 
-def _reorder_features_1d(arr: np.ndarray, c_single: int = 384) -> np.ndarray:
+# OF3 aatype class for unknown DNA ('DN'): the one class AF3's 31 lack.
+_OF3_UNK_DNA_AATYPE = 30
+
+
+def _reorder_features_1d(
+    arr: np.ndarray, c_single: int = 384, pad_unk_dna: bool = False
+) -> np.ndarray:
     """Reorder OF3 features_1d (single_emb + target_feat) along axis 0 to AF3 layout.
 
     OF3 layout: [single(c_single), atom_cross_att(384), OF3_aatype(32), OF3_profile(32), del_mean(1)]
@@ -88,12 +94,26 @@ def _reorder_features_1d(arr: np.ndarray, c_single: int = 384) -> np.ndarray:
 
     Works for 1-D (LayerNorm scale, shape c_single+449) and 2-D (Linear weights,
     shape (c_single+449, c_out)) arrays — reorders along axis 0.
+
+    With ``pad_unk_dna`` the two classes AF3 lacks (OF3's unknown-DNA slot in
+    the restype block and in the profile block) are KEPT, giving
+        [single, aatype(31), UNK_DNA, profile(31), UNK_DNA, del_mean, atom_cross_att]
+    (833 rows). They may not be dropped where the block feeds a LayerNorm (the
+    diffusion single conditioning): a LayerNorm maps a zero input to -mean/std
+    and normalises over 833 channels, not 831. The graph re-inserts matching
+    zero columns when ``global_config.openbind0`` is set.
     """
     remap = _AF3_TO_OF3_AATYPE
+    aatype = [arr[c_single + 384 + remap]]
+    profile = [arr[c_single + 416 + remap]]
+    if pad_unk_dna:
+        u = _OF3_UNK_DNA_AATYPE
+        aatype.append(arr[c_single + 384 + u: c_single + 385 + u])
+        profile.append(arr[c_single + 416 + u: c_single + 417 + u])
     return np.concatenate([
         arr[0:c_single],
-        arr[c_single + 384 + remap],         # aatype rows
-        arr[c_single + 416 + remap],         # profile rows
+        *aatype,                             # aatype rows
+        *profile,                            # profile rows
         arr[c_single + 448: c_single + 449], # del_mean
         arr[c_single: c_single + 384],       # atom_cross_att
     ], axis=0)
@@ -149,6 +169,21 @@ def _has(sd: dict, key: str) -> bool:
 
 
 # ─── Parameter dict helpers ───────────────────────────────────────────────────
+
+# ─── which OpenFold3 release is this checkpoint? ─────────────────────────────
+# OpenBind-0 (OpenFold3 v0.5.0) runs ONE pair LayerNorm for the whole diffusion
+# transformer; preview-2 stores one per block. The releases are told apart by a
+# tensor only one of them has, never by a filename or a version string.
+_SHARED_PAIR_NORM = 'diffusion_module.diffusion_transformer.layer_norm_z.weight'
+
+WEIGHT_FAMILY_PREVIEW2 = 'openfold3'
+WEIGHT_FAMILY_OPENBIND0 = 'openbind0'
+
+
+def of3_release(sd: dict) -> str:
+    """'openbind0' (v0.5.0) or 'openfold3' (preview-2) for a loaded state dict."""
+    return WEIGHT_FAMILY_OPENBIND0 if _has(sd, _SHARED_PAIR_NORM) else WEIGHT_FAMILY_PREVIEW2
+
 
 def _set(params: dict, scope: str, name: str, arr: np.ndarray) -> None:
     params.setdefault(scope, {})[name] = arr
@@ -419,7 +454,9 @@ def map_confidence_head(sd: dict, params: dict,
                          pair_H: int = 4, pair_D: int = 32,
                          single_H: int = 16, single_D: int = 24,
                          c_z: int = 128, c_s: int = 384,
-                         max_atoms_per_token: int = 24) -> None:
+                         max_atoms_per_token: int = 24,
+                         confidence_embed_row_col: str = 'auto') -> None:
+    openbind0 = of3_release(sd) == WEIGHT_FAMILY_OPENBIND0
     scope_base = 'diffuser/confidence_head'
     stack_scope = f'{scope_base}/__layer_stack_no_per_layer/confidence_pairformer'
     sentinel = 'aux_heads.pairformer_embedding.pairformer_stack.blocks.0.pair_stack.tri_mul_out.layer_norm_in.weight'
@@ -437,11 +474,28 @@ def map_confidence_head(sd: dict, params: dict,
         _populate_scope(params, stack_scope, _stack_blocks(_block_fn, n_layers))
     pe = 'aux_heads.pairformer_embedding'
     embed_scope = f'{scope_base}/~_embed_features'
+    # AF3's left/right naming is TRANSPOSED between its two pair-embedding sites:
+    #   evoformer._seq_pair_embedding:        left[:, None] + right[None]  (left = row i)
+    #   confidence_head._embed_features:      left(tf) + right(tf)[:, None] (left = column j)
+    # OF3 computes z += linear_i(s[:, None]) + linear_j(s[None]) in both places
+    # (linear_i = row i), so in the confidence head linear_i is AF3's `right` and
+    # linear_j its `left`. The OpenFold3 preview-2 conversion shipped with them
+    # the other way round (linear_i -> left), which transposes the pair embedding
+    # the confidence pairformer starts from and shows up in the asymmetric
+    # outputs (PAE, and pTM/ipTM that ride on it). Kept as it was for preview-2 so
+    # that already-published preview-2 weights reconvert byte-identically
+    # (`confidence_embed_row_col='legacy'`); OpenBind-0 is converted correctly.
+    if confidence_embed_row_col == 'auto':
+        confidence_embed_row_col = (
+            'legacy' if not openbind0 else 'row_is_right')
+    row_name, col_name = (
+        ('left', 'right') if confidence_embed_row_col == 'legacy'
+        else ('right', 'left'))
     if _has(sd, f'{pe}.linear_i.weight'):
-        _set(params, f'{embed_scope}/left_target_feat_project', 'weights',
+        _set(params, f'{embed_scope}/{row_name}_target_feat_project', 'weights',
              _reorder_target_feat_weights(_t(_get(sd, f'{pe}.linear_i.weight'))))
     if _has(sd, f'{pe}.linear_j.weight'):
-        _set(params, f'{embed_scope}/right_target_feat_project', 'weights',
+        _set(params, f'{embed_scope}/{col_name}_target_feat_project', 'weights',
              _reorder_target_feat_weights(_t(_get(sd, f'{pe}.linear_j.weight'))))
     if _has(sd, f'{pe}.linear_distance.weight'):
         _set(params, f'{embed_scope}/distogram_feat_project', 'weights', _t(_get(sd, f'{pe}.linear_distance.weight')))
@@ -499,15 +553,17 @@ def _diff_cond_transition_params(sd: dict, prefix: str, name: str) -> dict[str, 
 
 
 def convert_diff_self_attn_block(sd: dict, block_idx: int, prefix_base: str,
-                                  name: str, H: int, D: int) -> dict[str, np.ndarray]:
+                                  name: str, H: int, D: int, *,
+                                  per_block_pair_bias: bool = True) -> dict[str, np.ndarray]:
     pa = f'{prefix_base}.blocks.{block_idx}.attention_pair_bias'
     pt = f'{prefix_base}.blocks.{block_idx}.conditioned_transition'
     d = {}
     d.update(_diff_adaln_params(sd, f'{pa}.layer_norm_a', name))
     # Per-block pair LayerNorm + projection stored without name prefix to match
     # bare hm.LayerNorm(name='pair_input_layer_norm') in diffusion_transformer.py
-    d['pair_input_layer_norm/scale'] = _get(sd, f'{pa}.layer_norm_z.weight')
-    d['pair_logits_projection/weights'] = _t(_get(sd, f'{pa}.linear_z.weight'))
+    if per_block_pair_bias:
+        d['pair_input_layer_norm/scale'] = _get(sd, f'{pa}.layer_norm_z.weight')
+        d['pair_logits_projection/weights'] = _t(_get(sd, f'{pa}.linear_z.weight'))
     qw = _get(sd, f'{pa}.mha.linear_q.weight')
     d[f'{name}q_projection/weights'] = qw.T.reshape(-1, H, D)
     d[f'{name}q_projection/bias'] = _get(sd, f'{pa}.mha.linear_q.bias').reshape(H, D)
@@ -561,9 +617,11 @@ def _pair_logits_flat(sd: dict, prefix_base: str, n_blocks: int) -> np.ndarray:
 
 
 def _stack_main_transformer(sd: dict, prefix_base: str, name: str,
-                              n_blocks: int, n_super: int, H: int, D: int) -> dict[str, np.ndarray]:
+                              n_blocks: int, n_super: int, H: int, D: int, *,
+                              per_block_pair_bias: bool = True) -> dict[str, np.ndarray]:
     super_size = n_blocks // n_super
-    all_blocks = [convert_diff_self_attn_block(sd, i, prefix_base, name, H, D)
+    all_blocks = [convert_diff_self_attn_block(sd, i, prefix_base, name, H, D,
+                                               per_block_pair_bias=per_block_pair_bias)
                   for i in range(n_blocks)]
     result = {}
     for key in all_blocks[0]:
@@ -674,10 +732,11 @@ def map_diffusion_head(sd: dict, params: dict, *,
     _set(params, f'{scope}/pair_cond_initial_projection', 'weights', _t(_get(sd, f'{dc}.linear_z.weight')))
     _swiglu_flat(f'{dc}.transition_z.0', 'pair_transition_0')
     _swiglu_flat(f'{dc}.transition_z.1', 'pair_transition_1')
+    openbind0 = of3_release(sd) == WEIGHT_FAMILY_OPENBIND0
     _set(params, f'{scope}/single_cond_initial_norm', 'scale',
-         _reorder_features_1d(_get(sd, f'{dc}.layer_norm_s.weight')))
+         _reorder_features_1d(_get(sd, f'{dc}.layer_norm_s.weight'), pad_unk_dna=openbind0))
     _set(params, f'{scope}/single_cond_initial_projection', 'weights',
-         _reorder_features_1d(_t(_get(sd, f'{dc}.linear_s.weight'))))
+         _reorder_features_1d(_t(_get(sd, f'{dc}.linear_s.weight')), pad_unk_dna=openbind0))
     _set(params, f'{scope}/noise_embedding_initial_norm', 'scale', _get(sd, f'{dc}.layer_norm_n.weight'))
     _set(params, f'{scope}/noise_embedding_initial_projection', 'weights', _t(_get(sd, f'{dc}.linear_n.weight')))
     # Fourier embedding constants (PyTorch RNG differs from JAX RNG at seed=42)
@@ -746,9 +805,33 @@ def map_diffusion_head(sd: dict, params: dict, *,
     tr_base = f'{dm}.diffusion_transformer'
     tr_name = 'transformer'
     tr_scope = f'{scope}/{tr_name}'
-    tr_stacked = _stack_main_transformer(sd, tr_base, tr_name, n_diff_blocks, n_super_blocks, diff_H, diff_D)
-    tr_inner = f'{tr_scope}/__layer_stack_no_per_layer/__layer_stack_no_per_layer'
+    shared_pair_norm = openbind0
+    tr_stacked = _stack_main_transformer(sd, tr_base, tr_name, n_diff_blocks, n_super_blocks,
+                                         diff_H, diff_D, per_block_pair_bias=not shared_pair_norm)
+    # The stack scope name differs between the releases because the graph builds
+    # a different loop for each: AF3's path (OpenBind-0) threads the per-super-
+    # block pair logits into the stack (layer_stack(..., with_per_layer_inputs=
+    # True)); the per-block-LayerNorm path (preview-2) has nothing to thread.
+    # A wrong name is not a crash -- the blob misses every block parameter.
+    _stack = '__layer_stack_with_per_layer' if shared_pair_norm else '__layer_stack_no_per_layer'
+    tr_inner = f'{tr_scope}/{_stack}/{_stack}'
     _populate_scope(params, tr_inner, tr_stacked)
+    if shared_pair_norm:
+        # One pair LayerNorm for the whole stack, then a per-block projection
+        # that AF3 groups by super-block:
+        #   transformer/pair_input_layer_norm                      scale   (c_z,)
+        #   transformer/__layer_stack_with_per_layer/
+        #       pair_logits_projection                              weights (n_super, c_z, super, H)
+        _set(params, f'{tr_scope}/pair_input_layer_norm', 'scale',
+             _get(sd, f'{tr_base}.layer_norm_z.weight'))
+        super_size = n_diff_blocks // n_super_blocks
+        logits = np.stack(
+            [_t(_get(sd, f'{tr_base}.blocks.{i}.attention_pair_bias.linear_z.weight'))
+             for i in range(n_diff_blocks)], axis=0)        # (blocks, c_z, H)
+        logits = logits.reshape(n_super_blocks, super_size, *logits.shape[1:])
+        logits = np.transpose(logits, (0, 2, 1, 3))         # (n_super, c_z, super, H)
+        _set(params, f'{tr_scope}/__layer_stack_with_per_layer/pair_logits_projection',
+             'weights', logits)
 
     _set(params, f'{scope}/single_cond_embedding_norm', 'scale', _get(sd, f'{dm}.layer_norm_s.weight'))
     _set(params, f'{scope}/single_cond_embedding_projection', 'weights', _t(_get(sd, f'{dm}.linear_s.weight')))
@@ -770,8 +853,14 @@ def map_of3_to_af3(
     n_diff_blocks: int = 24, diff_H: int = 16, diff_D: int = 48,
     n_super_blocks: int = 6,
     n_atom_blocks: int = 3, atom_H: int = 4, atom_D: int = 32,
+    confidence_embed_row_col: str = 'auto',
 ) -> dict[str, dict[str, np.ndarray]]:
     """Convert an OF3 state dict to AF3 Haiku params dict.
+
+    The release (preview-2 or OpenBind-0) is read off the checkpoint
+    (`of3_release`). `confidence_embed_row_col` is 'auto' (preview-2 keeps its
+    published mapping, OpenBind-0 gets the corrected one), 'legacy' or
+    'row_is_right' to force either; see `map_confidence_head`.
 
     Returns nested dict {scope: {param_name: np.ndarray}} compatible with
     alphafold3.model.params for saving and loading.
@@ -785,7 +874,8 @@ def map_of3_to_af3(
                           pair_H=pair_H, pair_D=pair_D, single_H=single_H, single_D=single_D)
     map_confidence_head(state_dict, params,
                          pair_H=pair_H, pair_D=pair_D, single_H=single_H, single_D=single_D,
-                         c_z=c_z, c_s=c_s)
+                         c_z=c_z, c_s=c_s,
+                         confidence_embed_row_col=confidence_embed_row_col)
     map_distogram_head(state_dict, params)
     map_template_embedder(state_dict, params)
     map_evoformer_conditioning(state_dict, params, n_atom_blocks=n_atom_blocks,
@@ -858,3 +948,52 @@ def save_af3_params(params: dict[str, dict[str, np.ndarray]], output_dir: Path |
                 f.write(encode_record(scope, name, np.asarray(arr, dtype=np.float32)))
 
     return output_path
+
+
+def write_provenance(
+    output_dir: Path | str,
+    *,
+    source_checkpoint: Path | str,
+    family: str,
+    use_ema: bool = True,
+) -> Path:
+    """Writes `of3_ported_weights.provenance.json` beside the converted weights.
+
+    `weight_family` is what `of3_weight_family.detect_weight_family` reads, so a
+    runner picks the right forward branches without being told: preview-2
+    (`openfold3`) and OpenBind-0 (`openbind0`) share a file name and a graph
+    except for the three conventions `GlobalConfig.openbind0` switches.
+    """
+    import hashlib
+    import json
+
+    output_dir = Path(output_dir)
+    out = output_dir / 'of3_ported_weights.provenance.json'
+    weights = output_dir / 'of3_ported_weights.bin.zst'
+    source_checkpoint = Path(source_checkpoint)
+
+    def _sha256(path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open('rb') as f:
+            for chunk in iter(lambda: f.read(1 << 24), b''):
+                h.update(chunk)
+        return h.hexdigest()
+
+    record = {
+        'schema_version': 1,
+        'weight_family': family,
+        'license': 'Apache-2.0',
+        'conversion': {'use_ema': use_ema},
+        'source_checkpoint': {
+            'filename': source_checkpoint.name,
+            'bytes': source_checkpoint.stat().st_size,
+            'sha256': _sha256(source_checkpoint),
+        },
+        'converted_checkpoint': {
+            'filename': weights.name,
+            'bytes': weights.stat().st_size,
+            'sha256': _sha256(weights),
+        },
+    }
+    out.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+    return out
