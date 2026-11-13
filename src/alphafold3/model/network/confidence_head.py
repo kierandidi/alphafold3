@@ -105,6 +105,7 @@ class ConfidenceHead(hk.Module):
       seq_mask: jnp.ndarray,
       token_atoms_to_pseudo_beta: atom_layout.GatherInfo,
       asym_id: jnp.ndarray,
+      atom_name_chars: jnp.ndarray | None = None,
   ) -> dict[str, jnp.ndarray]:
     """Builds ConfidenceHead module.
 
@@ -251,6 +252,21 @@ class ConfidenceHead(hk.Module):
         name='plddt_logits',
     )(hm.LayerNorm(name='plddt_logits_ln')(single_act))
 
+    # OpenFold3 indexes the per-atom heads by the atom's RANK among the token's
+    # real atoms, not by its dense slot. The two agree until a slot is empty:
+    # a nucleotide's dropped 5' OP3 is dense slot 0, so by slot every atom of
+    # that nucleotide would read its neighbour's logit. A real slot has a
+    # non-empty name (the featuriser blanks the name of an atom it drops).
+    atom_rank = None
+    if self.global_config.openbind0 and atom_name_chars is not None:
+      real = jnp.any(atom_name_chars != 0, axis=-1)  # (num_res, num_atom)
+      atom_rank = jnp.clip(
+          jnp.cumsum(real, axis=-1) - 1, 0, dense_atom_positions.shape[-2] - 1
+      )
+      plddt_logits = jnp.take_along_axis(
+          plddt_logits, atom_rank[..., None], axis=1
+      )
+
     bin_width = 1.0 / self.config.num_plddt_bins
     bin_centers = jnp.arange(0.5 * bin_width, 1.0, bin_width)
     predicted_lddt = jnp.sum(
@@ -265,6 +281,10 @@ class ConfidenceHead(hk.Module):
         initializer=self.global_config.final_init,
         name='experimentally_resolved_logits',
     )(hm.LayerNorm(name='experimentally_resolved_ln')(single_act))
+    if atom_rank is not None:
+      experimentally_resolved_logits = jnp.take_along_axis(
+          experimentally_resolved_logits, atom_rank[..., None], axis=1
+      )
 
     predicted_experimentally_resolved = jax.nn.softmax(
         experimentally_resolved_logits, axis=-1
