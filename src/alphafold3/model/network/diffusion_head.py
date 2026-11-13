@@ -22,6 +22,7 @@
 from collections.abc import Callable
 
 from alphafold3.common import base_config
+from alphafold3.constants import residue_names
 from alphafold3.model import feat_batch
 from alphafold3.model import model_config
 from alphafold3.model.components import haiku_modules as hm
@@ -175,6 +176,31 @@ class DiffusionHead(hk.Module):
 
     target_feat = embeddings['target_feat']
     features_1d = jnp.concatenate([single_embedding, target_feat], axis=-1)
+    if self.global_config.openbind0:
+      # OpenFold3's restype and profile blocks carry 32 classes; AlphaFold 3's
+      # carry 31 (unknown DNA shares the unknown-nucleotide class). Everywhere
+      # else the extra class is dropped from the converted weights, because a
+      # zero input column contributes nothing to a bias-free Linear. This
+      # LayerNorm is the exception: it maps a zero input to -mean/std, so the
+      # vendor always normalises over 833 channels, not 831, and always
+      # contributes the two columns through their trained scale and weights.
+      # Re-insert them as zeros so the converted 833-wide scale and projection
+      # (`pad_unk_dna=True` in the converter) line up. Preview-2 keeps the
+      # 831-wide form it was converted for.
+      num_restypes = residue_names.POLYMER_TYPES_NUM_WITH_UNKNOWN_AND_GAP
+      pad = jnp.zeros_like(features_1d[..., :1])
+      aatype_end = single_embedding.shape[-1] + num_restypes
+      profile_end = aatype_end + num_restypes
+      features_1d = jnp.concatenate(
+          [
+              features_1d[..., :aatype_end],
+              pad,  # OpenFold3 aatype: unknown DNA
+              features_1d[..., aatype_end:profile_end],
+              pad,  # OpenFold3 profile: unknown DNA
+              features_1d[..., profile_end:],
+          ],
+          axis=-1,
+      )
     single_cond = hm.LayerNorm(
         use_fast_variance=False,
         create_offset=False,

@@ -227,8 +227,10 @@ class GridSelfAttention(hk.Module):
     )(act)
     nonbatched_bias = jnp.transpose(nonbatched_bias, [2, 0, 1])
     # OpenFold3 computes the pair bias from transposed z for column-wise attention;
-    # swap axes to match that convention when of3_weights=True.
-    if self.transpose and self.global_config.of3_weights:
+    # swap axes to match that convention when of3_weights=True. OpenBind-0
+    # (v0.5.0) computes it the AlphaFold 3 way, so it does not swap.
+    if (self.transpose and self.global_config.of3_weights
+        and not self.global_config.openbind0):
       nonbatched_bias = jnp.swapaxes(nonbatched_bias, -1, -2)
 
     num_residues = act.shape[0]
