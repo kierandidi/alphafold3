@@ -28,7 +28,7 @@ dependencies = [
     # rather than merely cautious.
     "jax[cuda12]==0.10.2; sys_platform != 'darwin'",
     "jax==0.10.2; sys_platform == 'darwin'",
-    "jax-mps==0.10.9; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "jax-mps>=0.10.11,<0.11; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "msgpack>=1.1",
     # Bounded because it was not bounded at all, and that was not theoretical:
     # a fresh install resolves numpy 2.5.x while uv.lock and the published
